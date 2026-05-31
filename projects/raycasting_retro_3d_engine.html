@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raycasting Retro 3D Engine</title>
+<style>
+  :root{--panel:#11151f;--accent:#f59e0b;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #wrap{position:relative}
+  canvas{display:block}
+  #hud{position:fixed;top:12px;left:12px;background:rgba(17,21,31,0.9);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;z-index:10;width:220px}
+  #hud h1{font-size:14px;margin-bottom:8px;color:var(--accent)}
+  label{display:flex;justify-content:space-between;color:var(--muted);margin:6px 0 2px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .stat{font-family:monospace;color:var(--muted);margin-top:8px;line-height:1.6}
+  #mini{position:fixed;top:12px;right:12px;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,0.6);z-index:10}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>🎮 Raycast 3D Engine</h1>
+  <label>FOV <span id="fovv">66°</span></label><input type="range" id="fov" min="40" max="100" value="66">
+  <label>Resolution <span id="resv">2</span></label><input type="range" id="res" min="1" max="6" value="2">
+  <label>Render dist <span id="ddv">20</span></label><input type="range" id="dd" min="8" max="40" value="20">
+  <div class="stat" id="fps"></div>
+  <div class="hint"><b>WASD</b> move · <b>←/→</b> or mouse turn · <b>Shift</b> run. Click canvas to lock mouse.</div>
+</div>
+<canvas id="mini" width="160" height="160"></canvas>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<script>
+"use strict";
+const MAP=`
+1111111111111111
+1000000002000001
+1011110110111101
+1010000000000101
+1010113331011101
+1010100000010001
+1010103330010111
+1000100200010001
+1011111110110101
+1000000010000101
+1010111010111101
+1010001010000001
+1011101011111101
+1000101000000041
+1010101110111101
+1111111111111111`.trim().split('\n').map(r=>r.split('').map(Number));
+const MH=MAP.length,MW=MAP[0].length;
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const mini=document.getElementById('mini'),mctx=mini.getContext('2d');
+let W,H;function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}window.addEventListener('resize',resize);resize();
+let px=2.5,py=2.5,dir=0;
+const WALLCOLORS={1:[120,120,140],2:[180,90,70],3:[70,120,180],4:[90,170,90]};
+const keys={};
+window.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+cv.addEventListener('click',()=>cv.requestPointerLock&&cv.requestPointerLock());
+document.addEventListener('mousemove',e=>{if(document.pointerLockElement===cv)dir+=e.movementX*0.003;});
+function P(id){return +document.getElementById(id).value;}
+function cell(x,y){if(x<0||y<0||x>=MW||y>=MH)return 1;return MAP[y|0][x|0];}
+function update(dt){
+  const speed=(keys['shift']?4.5:2.8)*dt;const rot=2.2*dt;
+  if(keys['arrowleft'])dir-=rot;if(keys['arrowright'])dir+=rot;
+  let mx=0,my=0;
+  if(keys['w']){mx+=Math.cos(dir);my+=Math.sin(dir);}
+  if(keys['s']){mx-=Math.cos(dir);my-=Math.sin(dir);}
+  if(keys['a']){mx+=Math.cos(dir-Math.PI/2);my+=Math.sin(dir-Math.PI/2);}
+  if(keys['d']){mx+=Math.cos(dir+Math.PI/2);my+=Math.sin(dir+Math.PI/2);}
+  const nx=px+mx*speed,ny=py+my*speed;
+  if(cell(nx,py)===0)px=nx;if(cell(px,ny)===0)py=ny;
+}
+function render(){
+  const fov=P('fov')*Math.PI/180;const resStep=P('res');const maxDist=P('dd');
+  // ceiling & floor gradient
+  const cg=ctx.createLinearGradient(0,0,0,H/2);cg.addColorStop(0,'#0a0f1c');cg.addColorStop(1,'#1a2238');ctx.fillStyle=cg;ctx.fillRect(0,0,W,H/2);
+  const fg=ctx.createLinearGradient(0,H/2,0,H);fg.addColorStop(0,'#1c1812');fg.addColorStop(1,'#0a0806');ctx.fillStyle=fg;ctx.fillRect(0,H/2,W,H/2);
+  for(let sx=0;sx<W;sx+=resStep){
+    const camX=2*sx/W-1;
+    const rayAng=dir+Math.atan(camX*Math.tan(fov/2));
+    const rdx=Math.cos(rayAng),rdy=Math.sin(rayAng);
+    // DDA
+    let mapX=px|0,mapY=py|0;
+    const ddx=Math.abs(1/rdx),ddy=Math.abs(1/rdy);
+    let stepX,stepY,sideDX,sideDY;
+    if(rdx<0){stepX=-1;sideDX=(px-mapX)*ddx;}else{stepX=1;sideDX=(mapX+1-px)*ddx;}
+    if(rdy<0){stepY=-1;sideDY=(py-mapY)*ddy;}else{stepY=1;sideDY=(mapY+1-py)*ddy;}
+    let hit=0,side=0,wall=1,dist=0;
+    while(hit===0&&dist<maxDist){
+      if(sideDX<sideDY){sideDX+=ddx;mapX+=stepX;side=0;}else{sideDY+=ddy;mapY+=stepY;side=1;}
+      wall=cell(mapX,mapY);if(wall>0)hit=1;
+    }
+    const perp=side===0?(sideDX-ddx):(sideDY-ddy);
+    // fisheye correction
+    const corrected=perp*Math.cos(rayAng-dir);
+    const lineH=H/Math.max(0.1,corrected);
+    const y0=Math.max(0,(H-lineH)/2),y1=Math.min(H,(H+lineH)/2);
+    let col=WALLCOLORS[wall]||[150,150,150];
+    const shade=Math.max(0.25,1-corrected/maxDist)*(side?0.7:1);
+    ctx.fillStyle=`rgb(${col[0]*shade|0},${col[1]*shade|0},${col[2]*shade|0})`;
+    ctx.fillRect(sx,y0,resStep,y1-y0);
+  }
+  drawMini();
+}
+function drawMini(){
+  const s=160/MW;mctx.clearRect(0,0,160,160);
+  for(let y=0;y<MH;y++)for(let x=0;x<MW;x++){if(MAP[y][x]>0){const c=WALLCOLORS[MAP[y][x]]||[120,120,120];mctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;mctx.fillRect(x*s,y*s,s-0.5,s-0.5);}}
+  mctx.fillStyle='#f59e0b';mctx.beginPath();mctx.arc(px*s,py*s,3,0,7);mctx.fill();
+  mctx.strokeStyle='#f59e0b';mctx.beginPath();mctx.moveTo(px*s,py*s);mctx.lineTo((px+Math.cos(dir)*1.5)*s,(py+Math.sin(dir)*1.5)*s);mctx.stroke();
+}
+let last=performance.now(),frames=0,fpsTime=0,fps=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(0.05,(now-last)/1000);last=now;
+  update(dt);render();
+  frames++;fpsTime+=dt;if(fpsTime>=0.5){fps=Math.round(frames/fpsTime);frames=0;fpsTime=0;}
+  document.getElementById('fps').textContent=`FPS ${fps} · pos ${px.toFixed(1)},${py.toFixed(1)} · ${(dir*180/Math.PI%360).toFixed(0)}°`;
+}
+['fov','res','dd'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById({fov:'fovv',res:'resv',dd:'ddv'}[id]).textContent=id==='fov'?P('fov')+'°':P(id);});
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

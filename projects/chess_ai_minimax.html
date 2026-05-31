@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess AI — Minimax + Alpha-Beta</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--light:#e9edcc;--dark:#779556}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:auto 250px;gap:18px;align-items:start}
+  .board{display:grid;grid-template-columns:repeat(8,56px);grid-template-rows:repeat(8,56px);border:3px solid #3a3a2a;border-radius:6px;overflow:hidden}
+  .sq{width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:42px;cursor:pointer;position:relative;user-select:none}
+  .sq.light{background:var(--light)}.sq.dark{background:var(--dark)}
+  .sq.sel{box-shadow:inset 0 0 0 4px #f6e05e}
+  .sq.move::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.3)}
+  .sq.capture::after{content:'';position:absolute;inset:3px;border-radius:50%;border:4px solid rgba(0,0,0,0.3);background:none;width:auto;height:auto}
+  .sq.check{background:#e06666!important}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  button,select{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-size:13px;cursor:pointer;width:100%;margin-top:6px}
+  button:hover{border-color:var(--accent)}
+  .stat{font-size:12px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.7}
+  .moves{font-family:monospace;font-size:12px;max-height:200px;overflow:auto;margin-top:8px;color:var(--muted)}
+  label{font-size:12px;color:var(--muted);display:block;margin-top:8px}
+  .status{font-size:15px;font-weight:600;text-align:center;padding:6px;color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>♟️ Chess AI — Minimax with Alpha-Beta Pruning</h1>
+<div class="layout">
+  <div class="board" id="board"></div>
+  <div class="panel">
+    <div class="status" id="status">Your move (White)</div>
+    <label>AI search depth <span id="depthV">3</span></label>
+    <input type="range" id="depth" min="1" max="4" value="3" style="width:100%;accent-color:var(--accent)">
+    <label>Positional weight</label>
+    <select id="weight"><option value="1">Standard</option><option value="0">Material only</option><option value="2">Aggressive (mobility)</option></select>
+    <button id="newGame">⟳ New game</button>
+    <button id="undo">↶ Undo</button>
+    <div class="stat" id="stat"></div>
+    <div class="moves" id="moveLog"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const GLYPH={P:'♙',N:'♘',B:'♗',R:'♖',Q:'♕',K:'♔',p:'♟',n:'♞',b:'♝',r:'♜',q:'♛',k:'♚'};
+const VAL={p:100,n:320,b:330,r:500,q:900,k:20000};
+// piece-square tables (white perspective)
+const PST={
+  p:[0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5, 0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0],
+  n:[-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-30,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-30,5,10,15,15,10,5,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-30,-40,-50],
+  b:[-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,10,10,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,10,10,10,10,10,10,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20],
+  r:[0,0,0,0,0,0,0,0,5,10,10,10,10,10,10,5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,0,0,0,5,5,0,0,0],
+  q:[-20,-10,-10,-5,-5,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,5,5,5,0,-10,-5,0,5,5,5,5,0,-5,0,0,5,5,5,5,0,-5,-10,5,5,5,5,5,0,-10,-10,0,5,0,0,0,0,-10,-20,-10,-10,-5,-5,-10,-10,-20],
+  k:[-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-20,-30,-30,-40,-40,-30,-30,-20,-10,-20,-20,-20,-20,-20,-20,-10,20,20,0,0,0,0,20,20,20,30,10,0,0,10,30,20]
+};
+let board,turn,history,selected,legalCache,enPassant,castle,aiThinking=false;
+function init(){
+  board=[
+    ['r','n','b','q','k','b','n','r'],
+    ['p','p','p','p','p','p','p','p'],
+    [0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],
+    ['P','P','P','P','P','P','P','P'],
+    ['R','N','B','Q','K','B','N','R']
+  ];
+  turn='w';history=[];selected=null;enPassant=null;castle={wk:true,wq:true,bk:true,bq:true};
+  render();document.getElementById('status').textContent='Your move (White)';document.getElementById('moveLog').innerHTML='';
+}
+const isWhite=p=>p&&p===p.toUpperCase();
+const colorOf=p=>p?(isWhite(p)?'w':'b'):null;
+function render(){
+  const b=document.getElementById('board');b.innerHTML='';
+  const kingPos=findKing(turn);const inChk=inCheck(turn);
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const sq=document.createElement('div');sq.className='sq '+((r+c)%2?'dark':'light');
+    const p=board[r][c];if(p)sq.textContent=GLYPH[p];
+    if(p&&isWhite(p))sq.style.color='#fff',sq.style.textShadow='0 1px 2px #555';else if(p)sq.style.color='#111';
+    if(selected){if(selected.r===r&&selected.c===c)sq.classList.add('sel');
+      const mv=legalCache&&legalCache.find(m=>m.fr===selected.r&&m.fc===selected.c&&m.tr===r&&m.tc===c);
+      if(mv)sq.classList.add(board[r][c]?'capture':'move');}
+    if(inChk&&kingPos&&kingPos.r===r&&kingPos.c===c)sq.classList.add('check');
+    sq.onclick=()=>clickSq(r,c);
+    b.appendChild(sq);
+  }
+}
+function findKing(color){const k=color==='w'?'K':'k';for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(board[r][c]===k)return{r,c};return null;}
+// generate pseudo-legal moves for a color
+function genMoves(color,brd=board,ep=enPassant,cs=castle){
+  const moves=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const p=brd[r][c];if(!p||colorOf(p)!==color)continue;
+    const type=p.toLowerCase();const fwd=color==='w'?-1:1;
+    if(type==='p'){
+      if(brd[r+fwd]&&brd[r+fwd][c]===0){addP(moves,r,c,r+fwd,c,brd);
+        const startRow=color==='w'?6:1;if(r===startRow&&brd[r+2*fwd][c]===0)moves.push({fr:r,fc:c,tr:r+2*fwd,tc:c,dbl:true});}
+      for(const dc of[-1,1]){const nr=r+fwd,nc=c+dc;if(nc<0||nc>7||nr<0||nr>7)continue;
+        if(brd[nr][nc]&&colorOf(brd[nr][nc])!==color)addP(moves,r,c,nr,nc,brd);
+        else if(ep&&ep.r===nr&&ep.c===nc)moves.push({fr:r,fc:c,tr:nr,tc:nc,ep:true});}
+    } else if(type==='n'){for(const[dr,dc]of[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]){const nr=r+dr,nc=c+dc;if(nr<0||nc<0||nr>7||nc>7)continue;if(!brd[nr][nc]||colorOf(brd[nr][nc])!==color)moves.push({fr:r,fc:c,tr:nr,tc:nc});}}
+    else if(type==='k'){for(const[dr,dc]of[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]]){const nr=r+dr,nc=c+dc;if(nr<0||nc<0||nr>7||nc>7)continue;if(!brd[nr][nc]||colorOf(brd[nr][nc])!==color)moves.push({fr:r,fc:c,tr:nr,tc:nc});}
+      // castling
+      const row=color==='w'?7:0;if(r===row&&c===4){
+        const ks=color==='w'?cs.wk:cs.bk,qs=color==='w'?cs.wq:cs.bq;
+        if(ks&&!brd[row][5]&&!brd[row][6]&&brd[row][7]&&brd[row][7].toLowerCase()==='r')moves.push({fr:r,fc:c,tr:row,tc:6,castle:'k'});
+        if(qs&&!brd[row][3]&&!brd[row][2]&&!brd[row][1]&&brd[row][0]&&brd[row][0].toLowerCase()==='r')moves.push({fr:r,fc:c,tr:row,tc:2,castle:'q'});
+      }
+    } else {const dirs=type==='b'?[[-1,-1],[-1,1],[1,-1],[1,1]]:type==='r'?[[-1,0],[1,0],[0,-1],[0,1]]:[[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]];
+      for(const[dr,dc]of dirs){let nr=r+dr,nc=c+dc;while(nr>=0&&nc>=0&&nr<8&&nc<8){if(!brd[nr][nc])moves.push({fr:r,fc:c,tr:nr,tc:nc});else{if(colorOf(brd[nr][nc])!==color)moves.push({fr:r,fc:c,tr:nr,tc:nc});break;}nr+=dr;nc+=dc;}}}
+  }
+  return moves;
+}
+function addP(moves,fr,fc,tr,tc){const promo=(tr===0||tr===7);if(promo)moves.push({fr,fc,tr,tc,promo:'q'});else moves.push({fr,fc,tr,tc});}
+function squareAttacked(r,c,byColor,brd){
+  const m=genMoves(byColor,brd,null,{wk:false,wq:false,bk:false,bq:false});
+  return m.some(mv=>mv.tr===r&&mv.tc===c);
+}
+function inCheck(color,brd=board){const k=findKingB(color,brd);if(!k)return false;return squareAttacked(k.r,k.c,color==='w'?'b':'w',brd);}
+function findKingB(color,brd){const k=color==='w'?'K':'k';for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(brd[r][c]===k)return{r,c};return null;}
+function applyMove(mv,brd,cs){
+  const nb=brd.map(row=>row.slice());const ncs={...cs};
+  const p=nb[mv.fr][mv.fc];nb[mv.tr][mv.tc]=p;nb[mv.fr][mv.fc]=0;
+  if(mv.ep)nb[mv.fr][mv.tc]=0;
+  if(mv.promo)nb[mv.tr][mv.tc]=colorOf(p)==='w'?mv.promo.toUpperCase():mv.promo;
+  if(mv.castle){const row=mv.fr;if(mv.castle==='k'){nb[row][5]=nb[row][7];nb[row][7]=0;}else{nb[row][3]=nb[row][0];nb[row][0]=0;}}
+  // update castle rights
+  if(p==='K'){ncs.wk=ncs.wq=false;}if(p==='k'){ncs.bk=ncs.bq=false;}
+  if(mv.fr===7&&mv.fc===0)ncs.wq=false;if(mv.fr===7&&mv.fc===7)ncs.wk=false;
+  if(mv.fr===0&&mv.fc===0)ncs.bq=false;if(mv.fr===0&&mv.fc===7)ncs.bk=false;
+  return {nb,ncs};
+}
+function legalMoves(color){
+  const pseudo=genMoves(color);const legal=[];
+  for(const mv of pseudo){
+    // castling: cannot castle through/into check
+    if(mv.castle){if(inCheck(color))continue;const through=mv.castle==='k'?5:3;if(squareAttacked(mv.fr,through,color==='w'?'b':'w',board))continue;}
+    const{nb}=applyMove(mv,board,castle);
+    if(!inCheck(color,nb))legal.push(mv);
+  }
+  return legal;
+}
+function clickSq(r,c){
+  if(turn!=='w'||aiThinking)return;
+  const p=board[r][c];
+  if(selected){
+    const mv=legalCache.find(m=>m.fr===selected.r&&m.fc===selected.c&&m.tr===r&&m.tc===c);
+    if(mv){makeMove(mv);selected=null;legalCache=null;render();
+      if(!gameOver('w'))setTimeout(aiMove,200);return;}
+  }
+  if(p&&colorOf(p)==='w'){selected={r,c};legalCache=legalMoves('w');}
+  else{selected=null;legalCache=null;}
+  render();
+}
+function notate(mv){const files='abcdefgh';const p=board[mv.fr][mv.fc]||'';const pc=p.toLowerCase()==='p'?'':p.toUpperCase();return pc+files[mv.fc]+(8-mv.fr)+(board[mv.tr][mv.tc]?'x':'-')+files[mv.tc]+(8-mv.tr)+(mv.promo?'=Q':'')+(mv.castle?(mv.castle==='k'?' O-O':' O-O-O'):'');}
+function makeMove(mv){
+  history.push({board:board.map(r=>r.slice()),castle:{...castle},enPassant,turn});
+  const note=notate(mv);
+  const{nb,ncs}=applyMove(mv,board,castle);board=nb;castle=ncs;
+  enPassant=mv.dbl?{r:(mv.fr+mv.tr)/2,c:mv.fc}:null;
+  turn=turn==='w'?'b':'w';
+  logMove(note);
+}
+function logMove(n){const l=document.getElementById('moveLog');const d=document.createElement('div');d.textContent=(history.length)+'. '+n;l.prepend(d);}
+function evaluate(brd,wt){
+  let score=0;
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){const p=brd[r][c];if(!p)continue;const t=p.toLowerCase();const base=VAL[t];const idx=isWhite(p)?r*8+c:(7-r)*8+c;const pst=wt>0?(PST[t]?PST[t][idx]:0):0;const v=base+pst;score+=isWhite(p)?v:-v;}
+  return score; // positive = white better
+}
+function minimax(brd,cs,ep,depth,alpha,beta,maximizing,wt){
+  if(depth===0)return evaluate(brd,wt);
+  const color=maximizing?'w':'b';
+  let moves=genMovesLegal(brd,cs,ep,color);
+  if(moves.length===0){if(inCheck(color,brd))return maximizing?-99999+ (4-depth):99999-(4-depth);return 0;}
+  // move ordering: captures first
+  moves.sort((a,b)=>(brd[b.tr][b.tc]?VAL[brd[b.tr][b.tc].toLowerCase()]:0)-(brd[a.tr][a.tc]?VAL[brd[a.tr][a.tc].toLowerCase()]:0));
+  if(maximizing){let best=-Infinity;for(const mv of moves){const{nb,ncs}=applyMove(mv,brd,cs);const nep=mv.dbl?{r:(mv.fr+mv.tr)/2,c:mv.fc}:null;const val=minimax(nb,ncs,nep,depth-1,alpha,beta,false,wt);best=Math.max(best,val);alpha=Math.max(alpha,val);if(beta<=alpha)break;}return best;}
+  else{let best=Infinity;for(const mv of moves){const{nb,ncs}=applyMove(mv,brd,cs);const nep=mv.dbl?{r:(mv.fr+mv.tr)/2,c:mv.fc}:null;const val=minimax(nb,ncs,nep,depth-1,alpha,beta,true,wt);best=Math.min(best,val);beta=Math.min(beta,val);if(beta<=alpha)break;}return best;}
+}
+function genMovesLegal(brd,cs,ep,color){
+  const pseudo=genMoves(color,brd,ep,cs);const out=[];
+  for(const mv of pseudo){if(mv.castle){if(inCheck(color,brd))continue;const through=mv.castle==='k'?5:3;if(squareAttacked(mv.fr,through,color==='w'?'b':'w',brd))continue;}const{nb}=applyMove(mv,brd,cs);if(!inCheck(color,nb))out.push(mv);}
+  return out;
+}
+function aiMove(){
+  aiThinking=true;document.getElementById('status').textContent='AI thinking…';
+  setTimeout(()=>{
+    const depth=+document.getElementById('depth').value;const wt=+document.getElementById('weight').value;
+    const moves=genMovesLegal(board,castle,enPassant,'b');
+    if(moves.length===0){aiThinking=false;gameOver('b');return;}
+    let best=null,bestVal=Infinity;const t0=performance.now();let nodes=0;
+    moves.sort((a,b)=>(board[b.tr][b.tc]?VAL[board[b.tr][b.tc].toLowerCase()]:0)-(board[a.tr][a.tc]?VAL[board[a.tr][a.tc].toLowerCase()]:0));
+    for(const mv of moves){const{nb,ncs}=applyMove(mv,board,castle);const nep=mv.dbl?{r:(mv.fr+mv.tr)/2,c:mv.fc}:null;const val=minimax(nb,ncs,nep,depth-1,-Infinity,Infinity,true,wt);nodes++;if(val<bestVal||(val===bestVal&&Math.random()<0.3)){bestVal=val;best=mv;}}
+    makeMove(best);render();
+    document.getElementById('stat').textContent=`depth ${depth} · eval ${(-bestVal/100).toFixed(2)} · ${(performance.now()-t0).toFixed(0)}ms`;
+    aiThinking=false;
+    if(!gameOver('w'))document.getElementById('status').textContent='Your move (White)';
+  },30);
+}
+function gameOver(color){
+  const moves=legalMoves(color);
+  if(moves.length===0){const st=document.getElementById('status');if(inCheck(color))st.textContent=(color==='w'?'Checkmate — Black wins! 🏆':'Checkmate — You win! 🏆');else st.textContent='Stalemate — draw.';return true;}
+  return false;
+}
+document.getElementById('newGame').onclick=init;
+document.getElementById('undo').onclick=()=>{if(history.length<2)return;for(let i=0;i<2&&history.length;i++){const h=history.pop();board=h.board;castle=h.castle;enPassant=h.enPassant;turn=h.turn;}selected=null;legalCache=null;render();document.getElementById('status').textContent='Your move (White)';};
+document.getElementById('depth').oninput=function(){document.getElementById('depthV').textContent=this.value;};
+init();
+</script>
+</body>
+</html>

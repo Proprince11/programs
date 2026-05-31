@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mind Map Relational Graph</title>
+<style>
+  :root{--panel:#11151f;--accent:#a78bfa;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #ui{position:fixed;top:12px;left:12px;background:rgba(17,21,31,0.94);border:1px solid var(--line);border-radius:12px;padding:14px;width:260px;z-index:10}
+  h1{font-size:15px;margin-bottom:10px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px;font-size:12px;cursor:pointer;margin:3px 2px 0 0}
+  button:hover{border-color:var(--accent)}
+  textarea{width:100%;height:120px;background:#05080f;border:1px solid var(--line);color:#cbd5e1;border-radius:8px;padding:8px;font-family:monospace;font-size:12px;resize:vertical;margin-top:6px}
+  label{font-size:11px;color:var(--muted);display:block;margin-top:8px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+  canvas{display:block;cursor:grab}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>🧠 Mind Map / Relational Graph</h1>
+  <button id="addNode">+ Node</button>
+  <button id="del">✕ Delete sel</button>
+  <button id="clear">Clear</button>
+  <label>Parse from outline (indent = child, "A -> B" = link)</label>
+  <textarea id="outline">Project
+  Frontend
+    React
+    CSS
+  Backend
+    API
+    Database
+  DevOps
+Frontend -> Backend
+Backend -> DevOps</textarea>
+  <button id="parse">⟳ Build from text</button>
+  <label>Link distance <span id="ldv">90</span></label><input type="range" id="ld" min="40" max="220" value="90">
+  <label>Repulsion <span id="rpv">3000</span></label><input type="range" id="rp" min="500" max="9000" step="100" value="3000">
+  <div class="hint">Double-click empty space to add a node. Drag a node onto another to link them. Double-click a node to rename. Drag = move; scroll = zoom.</div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W,H;function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+window.addEventListener('resize',resize);resize();
+let nodes=[],links=[],sel=null,nextId=1;
+const COLORS=['#a78bfa','#60a5fa','#34d399','#fbbf24','#f472b6','#22d3ee','#fb923c'];
+let cam={x:0,y:0,zoom:1};
+function addNode(label,x,y){const n={id:nextId++,label:label||'Idea',x:x??W/2+(Math.random()-0.5)*200,y:y??H/2+(Math.random()-0.5)*200,vx:0,vy:0,c:COLORS[nodes.length%COLORS.length]};nodes.push(n);return n;}
+function link(a,b){if(a===b)return;if(links.some(l=>(l.a===a&&l.b===b)||(l.a===b&&l.b===a)))return;links.push({a,b});}
+function parseOutline(){
+  nodes=[];links=[];nextId=1;
+  const lines=document.getElementById('outline').value.split('\n');
+  const stack=[];const byLabel={};
+  lines.forEach(line=>{
+    if(line.trim()==='')return;
+    const arrow=line.match(/^(.+?)\s*->\s*(.+)$/);
+    if(arrow){const a=byLabel[arrow[1].trim()],b=byLabel[arrow[2].trim()];if(a&&b)link(a,b);return;}
+    const indent=line.match(/^\s*/)[0].length;
+    const label=line.trim();
+    const node=addNode(label);byLabel[label]=node;
+    while(stack.length&&stack[stack.length-1].indent>=indent)stack.pop();
+    if(stack.length)link(stack[stack.length-1].node,node);
+    stack.push({indent,node});
+  });
+  // initial circular layout
+  nodes.forEach((n,i)=>{const a=i/nodes.length*Math.PI*2;n.x=W/2+Math.cos(a)*180;n.y=H/2+Math.sin(a)*180;});
+}
+function physics(){
+  const ld=+document.getElementById('ld').value,rp=+document.getElementById('rp').value;
+  for(let i=0;i<nodes.length;i++){
+    const a=nodes[i];
+    for(let j=i+1;j<nodes.length;j++){const b=nodes[j];let dx=b.x-a.x,dy=b.y-a.y;let d=Math.hypot(dx,dy)||1;const f=rp/(d*d);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}
+  }
+  links.forEach(l=>{let dx=l.b.x-l.a.x,dy=l.b.y-l.a.y,d=Math.hypot(dx,dy)||1;const f=(d-ld)*0.02;l.a.vx+=dx/d*f;l.a.vy+=dy/d*f;l.b.vx-=dx/d*f;l.b.vy-=dy/d*f;});
+  nodes.forEach(n=>{if(n===dragNode)return;n.vx+=(W/2-n.x)*0.0006;n.vy+=(H/2-n.y)*0.0006;n.x+=n.vx;n.y+=n.vy;n.vx*=0.85;n.vy*=0.85;});
+}
+function draw(){
+  ctx.fillStyle='#070a11';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2,H/2);ctx.scale(cam.zoom,cam.zoom);ctx.translate(-W/2+cam.x,-H/2+cam.y);
+  ctx.strokeStyle='#3a4255';ctx.lineWidth=1.5;links.forEach(l=>{ctx.beginPath();ctx.moveTo(l.a.x,l.a.y);ctx.lineTo(l.b.x,l.b.y);ctx.stroke();});
+  nodes.forEach(n=>{
+    const w=ctx.measureText(n.label).width+24;
+    ctx.fillStyle=n===sel?'#fff':n.c;
+    ctx.beginPath();ctx.roundRect(n.x-w/2,n.y-16,w,32,8);ctx.fill();
+    ctx.fillStyle='#0d0a14';ctx.font='13px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(n.label,n.x,n.y);
+  });
+  ctx.restore();
+}
+function loop(){requestAnimationFrame(loop);physics();draw();}
+function screenToWorld(sx,sy){return{x:(sx-W/2)/cam.zoom+W/2-cam.x,y:(sy-H/2)/cam.zoom+H/2-cam.y};}
+function nodeAt(sx,sy){const p=screenToWorld(sx,sy);for(let i=nodes.length-1;i>=0;i--){const n=nodes[i];const w=ctx.measureText(n.label).width+24;if(Math.abs(p.x-n.x)<w/2&&Math.abs(p.y-n.y)<18)return n;}return null;}
+let dragNode=null,dragStart=null,panning=false,linkTarget=null;
+cv.addEventListener('mousedown',e=>{const n=nodeAt(e.clientX,e.clientY);if(n){dragNode=n;sel=n;dragStart={x:e.clientX,y:e.clientY,nx:n.x,ny:n.y,moved:false};}else{panning=true;dragStart={x:e.clientX,y:e.clientY,cx:cam.x,cy:cam.y};sel=null;}});
+cv.addEventListener('mousemove',e=>{
+  if(dragNode){const p=screenToWorld(e.clientX,e.clientY);dragNode.x=p.x;dragNode.y=p.y;dragNode.vx=dragNode.vy=0;dragStart.moved=true;linkTarget=nodes.find(n=>n!==dragNode&&nodeAt(e.clientX,e.clientY)===n);}
+  else if(panning){cam.x=dragStart.cx+(e.clientX-dragStart.x)/cam.zoom;cam.y=dragStart.cy+(e.clientY-dragStart.y)/cam.zoom;}
+});
+window.addEventListener('mouseup',e=>{if(dragNode&&linkTarget){link(dragNode,linkTarget);}dragNode=null;panning=false;linkTarget=null;});
+cv.addEventListener('dblclick',e=>{const n=nodeAt(e.clientX,e.clientY);if(n){const v=prompt('Rename node:',n.label);if(v!==null)n.label=v;}else{const p=screenToWorld(e.clientX,e.clientY);addNode('Idea',p.x,p.y);}});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.zoom*=e.deltaY<0?1.1:0.9;cam.zoom=Math.max(0.3,Math.min(3,cam.zoom));},{passive:false});
+document.getElementById('addNode').onclick=()=>addNode();
+document.getElementById('del').onclick=()=>{if(sel){nodes=nodes.filter(n=>n!==sel);links=links.filter(l=>l.a!==sel&&l.b!==sel);sel=null;}};
+document.getElementById('clear').onclick=()=>{nodes=[];links=[];};
+document.getElementById('parse').onclick=parseOutline;
+['ld','rp'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById(id==='ld'?'ldv':'rpv').textContent=document.getElementById(id).value;});
+if(!CanvasRenderingContext2D.prototype.roundRect)CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);return this;};
+parseOutline();loop();
+</script>
+</body>
+</html>

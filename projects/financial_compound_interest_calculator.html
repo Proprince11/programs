@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compound Interest Calculator</title>
+<style>
+  :root{--panel:#11151f;--accent:#34d399;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:12px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=number]{width:100%;background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:8px;font-family:monospace}
+  select{width:100%;background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:8px}
+  canvas{width:100%;background:#05080f;border-radius:10px;display:block}
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+  .stat{background:#05080f;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+  .stat .v{font-size:20px;font-weight:700;font-family:monospace}.stat .l{font-size:10px;color:var(--muted);text-transform:uppercase}
+  .legend{display:flex;gap:14px;font-size:12px;margin-top:8px}
+  .legend span{display:flex;align-items:center;gap:5px}.dot{width:12px;height:12px;border-radius:3px}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:12px;margin-top:10px}
+  td,th{border-bottom:1px solid var(--line);padding:5px;text-align:right}th{color:var(--muted)}td:first-child,th:first-child{text-align:left}
+</style>
+</head>
+<body>
+<h1>💰 Compound Interest &amp; Investment Growth Calculator</h1>
+<div class="layout">
+  <div class="panel">
+    <label>Initial principal <span id="pv">$10,000</span></label><input type="range" id="principal" min="0" max="100000" step="500" value="10000">
+    <label>Monthly contribution <span id="cv">$500</span></label><input type="range" id="contrib" min="0" max="5000" step="50" value="500">
+    <label>Annual contribution increase <span id="civ">2%</span></label><input type="range" id="cincrease" min="0" max="15" step="0.5" value="2">
+    <label>Annual return rate <span id="rv">7%</span></label><input type="range" id="rate" min="0" max="20" step="0.1" value="7">
+    <label>Inflation rate <span id="iv">2.5%</span></label><input type="range" id="inflation" min="0" max="10" step="0.1" value="2.5">
+    <label>Years <span id="yv">30</span></label><input type="range" id="years" min="1" max="50" value="30">
+    <label>Compounding</label>
+    <select id="freq"><option value="12">Monthly</option><option value="4">Quarterly</option><option value="1">Annually</option><option value="365">Daily</option></select>
+  </div>
+  <div class="panel">
+    <div class="summary" id="summary"></div>
+    <canvas id="chart" height="320"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#3b82f6"></span>Contributions</span>
+      <span><span class="dot" style="background:#34d399"></span>Interest earned</span>
+      <span><span class="dot" style="background:#fbbf24"></span>Inflation-adjusted (real)</span>
+    </div>
+    <table id="table"></table>
+  </div>
+</div>
+<script>
+"use strict";
+function P(id){return +document.getElementById(id).value;}
+function fmt(n){return '$'+Math.round(n).toLocaleString();}
+function compute(){
+  const principal=P('principal'),contrib=P('contrib'),cincrease=P('cincrease')/100,rate=P('rate')/100,infl=P('inflation')/100,years=P('years'),freq=+document.getElementById('freq').value;
+  document.getElementById('pv').textContent=fmt(principal);
+  document.getElementById('cv').textContent=fmt(contrib);
+  document.getElementById('civ').textContent=P('cincrease')+'%';
+  document.getElementById('rv').textContent=P('rate')+'%';
+  document.getElementById('iv').textContent=P('inflation')+'%';
+  document.getElementById('yv').textContent=years;
+  // simulate month by month, applying periodic compounding rate
+  const monthlyRate=Math.pow(1+rate/freq,freq/12)-1; // effective monthly from compounding freq
+  let balance=principal,totalContrib=principal,curContrib=contrib;
+  const series=[];
+  for(let m=0;m<=years*12;m++){
+    if(m>0){balance*=(1+monthlyRate);balance+=curContrib;totalContrib+=curContrib;if(m%12===0)curContrib*=(1+cincrease);}
+    if(m%12===0){const real=balance/Math.pow(1+infl,m/12);series.push({year:m/12,balance,contrib:totalContrib,interest:balance-totalContrib,real});}
+  }
+  const last=series[series.length-1];
+  document.getElementById('summary').innerHTML=
+    `<div class="stat"><div class="v" style="color:#e6edf3">${fmt(last.balance)}</div><div class="l">Final balance</div></div>
+     <div class="stat"><div class="v" style="color:#34d399">${fmt(last.interest)}</div><div class="l">Interest earned</div></div>
+     <div class="stat"><div class="v" style="color:#fbbf24">${fmt(last.real)}</div><div class="l">Real (today's $)</div></div>`;
+  draw(series);
+  // table every 5 years
+  let rows='<tr><th>Year</th><th>Contributions</th><th>Interest</th><th>Balance</th><th>Real value</th></tr>';
+  series.filter(s=>s.year%5===0||s.year===years).forEach(s=>rows+=`<tr><td>${s.year}</td><td>${fmt(s.contrib)}</td><td style="color:#34d399">${fmt(s.interest)}</td><td><b>${fmt(s.balance)}</b></td><td style="color:#fbbf24">${fmt(s.real)}</td></tr>`);
+  document.getElementById('table').innerHTML=rows;
+}
+function draw(series){
+  const cv=document.getElementById('chart'),ctx=cv.getContext('2d');cv.width=cv.clientWidth;const W=cv.width,H=cv.height,pad=44;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  const maxV=Math.max(...series.map(s=>s.balance));
+  const x=i=>pad+i/(series.length-1)*(W-pad*1.4);
+  const y=v=>H-pad-v/maxV*(H-pad*1.5);
+  // grid
+  ctx.strokeStyle='#1a2230';ctx.fillStyle='#5a6678';ctx.font='10px monospace';
+  for(let i=0;i<=5;i++){const gy=pad/2+i/5*(H-pad*1.5);ctx.beginPath();ctx.moveTo(pad,gy);ctx.lineTo(W-pad*0.4,gy);ctx.stroke();ctx.fillText(fmt(maxV*(5-i)/5),2,gy+3);}
+  // stacked area: contributions then interest
+  function area(getY,color){ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(x(0),y(0));series.forEach((s,i)=>ctx.lineTo(x(i),getY(s)));ctx.lineTo(x(series.length-1),y(0));ctx.closePath();ctx.fill();}
+  area(s=>y(s.balance),'rgba(52,211,153,0.35)');
+  area(s=>y(s.contrib),'rgba(59,130,246,0.5)');
+  // lines
+  function line(getV,color,dash){ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dash||[]);ctx.beginPath();series.forEach((s,i)=>{const yy=y(getV(s));i?ctx.lineTo(x(i),yy):ctx.moveTo(x(i),yy);});ctx.stroke();ctx.setLineDash([]);}
+  line(s=>s.balance,'#34d399');line(s=>s.contrib,'#3b82f6');line(s=>s.real,'#fbbf24',[5,4]);
+  ctx.fillStyle='#5a6678';series.forEach((s,i)=>{if(s.year%5===0)ctx.fillText('Y'+s.year,x(i)-8,H-pad+16);});
+}
+['principal','contrib','cincrease','rate','inflation','years','freq'].forEach(id=>document.getElementById(id).oninput=compute);
+compute();
+</script>
+</body>
+</html>

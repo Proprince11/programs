@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vector Tower Defense</title>
+<style>
+  :root{--panel:#11151f;--accent:#34d399;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 220px;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  canvas{background:#0a1018;border-radius:10px;display:block;width:100%;cursor:crosshair}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:9px;font-size:13px;cursor:pointer;width:100%;margin-top:6px}
+  button:hover{border-color:var(--accent)}
+  button.sel{background:var(--accent);color:#04221a}
+  .stat{font-size:13px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.8}
+  .stat b{color:var(--accent)}
+  .tower{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+<h1>🗼 Vector Tower Defense <span style="font-size:12px;color:var(--muted)">— path-following creeps &amp; distance-targeting turrets</span></h1>
+<div class="layout">
+  <div class="panel"><canvas id="cv" width="720" height="480"></canvas></div>
+  <div class="panel">
+    <div class="stat">❤️ Lives <b id="lives">20</b> · 💰 <b id="gold">120</b></div>
+    <div class="stat">Wave <b id="wave">0</b> · Score <b id="score">0</b></div>
+    <button id="cannon" class="sel">🔵 Cannon — 50g</button>
+    <button id="sniper">🔴 Sniper — 90g</button>
+    <button id="frost">🧊 Frost — 70g</button>
+    <button id="startWave">▶ Start wave</button>
+    <button id="speed">⏩ Speed: 1×</button>
+    <div class="hint">Click the grass to place a turret. Cannon = fast/cheap, Sniper = long-range high-damage, Frost = slows creeps. Don't let creeps reach the exit!</div>
+    <div class="stat" id="msg"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const W=720,H=480,TS=40;
+// waypoint path
+const PATH=[{x:0,y:120},{x:240,y:120},{x:240,y:360},{x:480,y:360},{x:480,y:120},{x:720,y:120}];
+const TOWERS={
+  cannon:{cost:50,range:110,dmg:8,rate:30,color:'#3b82f6',proj:'#93c5fd',name:'Cannon'},
+  sniper:{cost:90,range:230,dmg:30,rate:75,color:'#ef4444',proj:'#fca5a5',name:'Sniper'},
+  frost:{cost:70,range:100,dmg:3,rate:40,color:'#22d3ee',proj:'#a5f3fc',name:'Frost',slow:0.5}
+};
+let towers=[],creeps=[],projectiles=[],lives=20,gold=120,wave=0,score=0,placing='cannon',waveActive=false,spawnQueue=0,spawnTimer=0,speedMult=1;
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function onPath(x,y){for(let i=0;i<PATH.length-1;i++){const a=PATH[i],b=PATH[i+1];const t=Math.max(0,Math.min(1,((x-a.x)*(b.x-a.x)+(y-a.y)*(b.y-a.y))/(dist(a,b)**2||1)));const px=a.x+t*(b.x-a.x),py=a.y+t*(b.y-a.y);if(Math.hypot(x-px,y-py)<28)return true;}return false;}
+function spawnCreep(){
+  const hp=18+wave*8;const speed=0.7+wave*0.04;
+  creeps.push({seg:0,t:0,x:PATH[0].x,y:PATH[0].y,hp,maxhp:hp,speed,slow:1,slowTime:0,gold:5+Math.floor(wave/2)});
+}
+function startWave(){if(waveActive)return;wave++;spawnQueue=5+wave*2;waveActive=true;document.getElementById('wave').textContent=wave;}
+function update(){
+  // spawning
+  if(waveActive&&spawnQueue>0){spawnTimer--;if(spawnTimer<=0){spawnCreep();spawnQueue--;spawnTimer=40;}}
+  if(waveActive&&spawnQueue===0&&creeps.length===0){waveActive=false;gold+=20+wave*5;document.getElementById('msg').innerHTML=`<b>Wave ${wave} cleared!</b> +${20+wave*5}g`;}
+  // creeps move along path
+  for(const cr of creeps){
+    if(cr.slowTime>0){cr.slowTime--;}else cr.slow=1;
+    const a=PATH[cr.seg],b=PATH[cr.seg+1];if(!b){cr.dead=true;lives--;continue;}
+    const segLen=dist(a,b);cr.t+=cr.speed*cr.slow/segLen;
+    if(cr.t>=1){cr.seg++;cr.t=0;if(cr.seg>=PATH.length-1){cr.dead=true;lives--;continue;}}
+    const aa=PATH[cr.seg],bb=PATH[cr.seg+1];cr.x=aa.x+(bb.x-aa.x)*cr.t;cr.y=aa.y+(bb.y-aa.y)*cr.t;
+  }
+  creeps=creeps.filter(c=>!c.dead||c.hp>0);
+  // remove leaked
+  creeps=creeps.filter(c=>{if(c.dead&&c.hp>0){return false;}return c.hp>0;});
+  // towers fire
+  for(const t of towers){
+    t.cool=(t.cool||0)-1;
+    if(t.cool>0)continue;
+    // target: furthest along path within range
+    let target=null,bestProg=-1;
+    for(const cr of creeps){if(cr.hp<=0)continue;const d=dist(t,cr);if(d<=t.range){const prog=cr.seg+cr.t;if(prog>bestProg){bestProg=prog;target=cr;}}}
+    if(target){const spec=TOWERS[t.type];projectiles.push({x:t.x,y:t.y,target,speed:7,dmg:spec.dmg,color:spec.proj,slow:spec.slow,type:t.type});t.cool=spec.rate;t.angle=Math.atan2(target.y-t.y,target.x-t.x);}
+  }
+  // projectiles
+  for(const p of projectiles){
+    if(!p.target||p.target.hp<=0){p.dead=true;continue;}
+    const d=dist(p,p.target);if(d<8){p.target.hp-=p.dmg;if(p.slow){p.target.slow=p.slow;p.target.slowTime=60;}if(p.target.hp<=0){gold+=p.target.gold;score+=p.target.gold*2;p.target.dead=true;}p.dead=true;}
+    else{p.x+=(p.target.x-p.x)/d*p.speed;p.y+=(p.target.y-p.y)/d*p.speed;}
+  }
+  projectiles=projectiles.filter(p=>!p.dead);
+  creeps=creeps.filter(c=>c.hp>0&&!c.dead);
+  if(lives<=0){waveActive=false;}
+}
+function draw(){
+  ctx.fillStyle='#0a1018';ctx.fillRect(0,0,W,H);
+  // grass grid
+  ctx.strokeStyle='#0e1626';for(let x=0;x<W;x+=TS){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}for(let y=0;y<H;y+=TS){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  // path
+  ctx.strokeStyle='#3a2f1e';ctx.lineWidth=44;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();PATH.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
+  ctx.strokeStyle='#4a3d28';ctx.lineWidth=38;ctx.beginPath();PATH.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
+  // exit
+  ctx.fillStyle='#ef4444';ctx.fillRect(W-12,PATH[PATH.length-1].y-22,12,44);
+  // towers
+  for(const t of towers){const spec=TOWERS[t.type];
+    if(t===hoverTower){ctx.fillStyle='rgba(255,255,255,0.05)';ctx.beginPath();ctx.arc(t.x,t.y,t.range,0,7);ctx.fill();}
+    ctx.fillStyle=spec.color;ctx.beginPath();ctx.arc(t.x,t.y,14,0,7);ctx.fill();
+    ctx.save();ctx.translate(t.x,t.y);ctx.rotate(t.angle||0);ctx.fillStyle='#0d1117';ctx.fillRect(0,-4,20,8);ctx.restore();
+  }
+  // creeps
+  for(const cr of creeps){
+    ctx.fillStyle=cr.slow<1?'#7dd3fc':'#f59e0b';ctx.beginPath();ctx.arc(cr.x,cr.y,11,0,7);ctx.fill();
+    ctx.fillStyle='#000';ctx.fillRect(cr.x-12,cr.y-18,24,4);ctx.fillStyle='#34d399';ctx.fillRect(cr.x-12,cr.y-18,24*cr.hp/cr.maxhp,4);
+  }
+  // projectiles
+  for(const p of projectiles){ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,4,0,7);ctx.fill();}
+  // placement preview
+  if(mouse&&!onPath(mouse.x,mouse.y)){const spec=TOWERS[placing];ctx.strokeStyle=gold>=spec.cost?'rgba(52,211,153,0.4)':'rgba(248,113,113,0.4)';ctx.beginPath();ctx.arc(mouse.x,mouse.y,spec.range,0,7);ctx.stroke();ctx.fillStyle=spec.color+'88';ctx.beginPath();ctx.arc(mouse.x,mouse.y,14,0,7);ctx.fill();}
+  // HUD
+  document.getElementById('lives').textContent=Math.max(0,lives);
+  document.getElementById('gold').textContent=gold;
+  document.getElementById('score').textContent=score;
+  if(lives<=0){ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#ef4444';ctx.font='bold 40px system-ui';ctx.textAlign='center';ctx.fillText('GAME OVER',W/2,H/2);ctx.font='16px system-ui';ctx.fillStyle='#fff';ctx.fillText('Reached wave '+wave+' · score '+score,W/2,H/2+34);}
+}
+let mouse=null,hoverTower=null;
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();mouse={x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};hoverTower=towers.find(t=>dist(t,mouse)<16);});
+cv.addEventListener('mouseleave',()=>{mouse=null;hoverTower=null;});
+cv.addEventListener('click',e=>{if(lives<=0)return;const r=cv.getBoundingClientRect();const x=(e.clientX-r.left)*W/r.width,y=(e.clientY-r.top)*H/r.height;const spec=TOWERS[placing];if(onPath(x,y)){document.getElementById('msg').textContent='Cannot build on the path!';return;}if(towers.some(t=>dist(t,{x,y})<28)){document.getElementById('msg').textContent='Too close to another turret.';return;}if(gold<spec.cost){document.getElementById('msg').textContent='Not enough gold.';return;}gold-=spec.cost;towers.push({x,y,type:placing,range:spec.range,cool:0,angle:0});});
+['cannon','sniper','frost'].forEach(t=>document.getElementById(t).onclick=function(){placing=t;document.querySelectorAll('#cannon,#sniper,#frost').forEach(b=>b.classList.remove('sel'));this.classList.add('sel');});
+document.getElementById('startWave').onclick=startWave;
+document.getElementById('speed').onclick=function(){speedMult=speedMult===1?2:speedMult===2?4:1;this.textContent='⏩ Speed: '+speedMult+'×';};
+function loop(){requestAnimationFrame(loop);for(let i=0;i<speedMult;i++)if(lives>0)update();draw();}
+loop();
+</script>
+</body>
+</html>

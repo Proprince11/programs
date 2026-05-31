@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Typing Speed &amp; Cadence Analyst</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--ok:#4ade80;--err:#f87171;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:18px;max-width:920px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}
+  .prompt{font-size:20px;line-height:1.9;font-family:'SF Mono',monospace;letter-spacing:.5px;user-select:none}
+  .prompt span.correct{color:var(--ok)}
+  .prompt span.wrong{color:var(--err);background:#3a1318;border-radius:3px}
+  .prompt span.cur{background:var(--accent);color:#04212f;border-radius:3px}
+  #hidden{position:absolute;opacity:0;left:-9999px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .stat{background:#05080f;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+  .stat .v{font-size:26px;font-weight:700;font-family:monospace}.stat .l{font-size:10px;color:var(--muted);text-transform:uppercase}
+  button,select{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 14px;cursor:pointer;font-size:13px;margin-right:6px}
+  button:hover{border-color:var(--accent)}
+  canvas{width:100%;background:#05080f;border-radius:10px;display:block;margin-top:8px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<h1>⌨️ Typing Speed &amp; Cadence Analyst</h1>
+<div class="panel">
+  <div class="stats">
+    <div class="stat"><div class="v" id="wpm">0</div><div class="l">WPM (net)</div></div>
+    <div class="stat"><div class="v" id="raw">0</div><div class="l">Raw WPM</div></div>
+    <div class="stat"><div class="v" id="acc">100%</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="v" id="time">0.0s</div><div class="l">Elapsed</div></div>
+  </div>
+  <div class="prompt" id="prompt" tabindex="0"></div>
+  <input id="hidden" autocomplete="off">
+  <div style="margin-top:14px">
+    <select id="diff"><option value="0">Common words</option><option value="1">Quotes</option><option value="2">Code snippet</option><option value="3">Punctuation-heavy</option></select>
+    <button id="restart">↻ Restart</button>
+    <span style="color:var(--muted);font-size:12px">Click the text and start typing</span>
+  </div>
+</div>
+<div class="panel">
+  <h2>Keystroke cadence (inter-key interval, ms)</h2>
+  <canvas id="cadence" height="160"></canvas>
+</div>
+<div class="panel">
+  <h2>Error clustering by character &amp; per-key latency</h2>
+  <canvas id="errors" height="140"></canvas>
+</div>
+<script>
+"use strict";
+const TEXTS=[
+  'the quick brown fox jumps over the lazy dog while birds sing in the bright morning sky and people walk slowly down the quiet street',
+  'Success is not final, failure is not fatal: it is the courage to continue that counts. The only limit to our realization of tomorrow is our doubts of today.',
+  'function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }',
+  'Wait—what?! "Don\'t," she said, pausing; the clock read 12:45 (a.m.), & the rain fell: heavy, cold, relentless... yet hopeful.'
+];
+let target='',input='',started=null,times=[],lastTime=null,errorMap={},keyLat={},finished=false;
+function setup(){
+  target=TEXTS[+document.getElementById('diff').value];
+  input='';started=null;times=[];lastTime=null;errorMap={};keyLat={};finished=false;
+  render();updateStats();drawCadence();drawErrors();
+}
+function render(){
+  const p=document.getElementById('prompt');let html='';
+  for(let i=0;i<target.length;i++){
+    let cls='';
+    if(i<input.length)cls=input[i]===target[i]?'correct':'wrong';
+    else if(i===input.length)cls='cur';
+    html+=`<span class="${cls}">${target[i]==='\n'?'⏎<br>':target[i].replace('<','&lt;').replace(' ','&nbsp;')}</span>`;
+  }
+  p.innerHTML=html;
+}
+document.getElementById('prompt').onclick=()=>document.getElementById('hidden').focus();
+document.getElementById('hidden').addEventListener('input',e=>{
+  if(finished){e.target.value='';return;}
+  const val=e.target.value;const now=performance.now();
+  if(!started)started=now;
+  if(val.length>input.length){ // new char typed
+    const ch=val[val.length-1];const idx=val.length-1;
+    if(lastTime!==null)times.push(now-lastTime);lastTime=now;
+    const expected=target[idx];
+    keyLat[expected]=keyLat[expected]||[];if(lastTime&&times.length)keyLat[expected].push(times[times.length-1]||0);
+    if(ch!==expected){errorMap[expected]=(errorMap[expected]||0)+1;}
+  }
+  input=val.slice(0,target.length);
+  render();updateStats();drawCadence();drawErrors();
+  if(input.length>=target.length){finished=true;}
+});
+function updateStats(){
+  const elapsed=started?(performance.now()-started)/1000:0;
+  let correct=0;for(let i=0;i<input.length;i++)if(input[i]===target[i])correct++;
+  const errors=input.length-correct;
+  const acc=input.length?(correct/input.length*100):100;
+  const grossWPM=elapsed>0?(input.length/5)/(elapsed/60):0;
+  const netWPM=Math.max(0,grossWPM-(errors/(elapsed/60||1))/5);
+  document.getElementById('wpm').textContent=Math.round(netWPM);
+  document.getElementById('raw').textContent=Math.round(grossWPM);
+  document.getElementById('acc').textContent=acc.toFixed(0)+'%';
+  document.getElementById('time').textContent=elapsed.toFixed(1)+'s';
+}
+function drawCadence(){
+  const cv=document.getElementById('cadence'),ctx=cv.getContext('2d');cv.width=cv.clientWidth;const W=cv.width,H=cv.height;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  if(times.length<2){ctx.fillStyle='#5a6678';ctx.font='12px monospace';ctx.fillText('Start typing to see your rhythm…',12,H/2);return;}
+  const mx=Math.max(...times,200);const avg=times.reduce((a,b)=>a+b,0)/times.length;
+  // avg line
+  ctx.strokeStyle='#3a4255';ctx.setLineDash([4,4]);ctx.beginPath();const ay=H-avg/mx*(H-20);ctx.moveTo(0,ay);ctx.lineTo(W,ay);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='#5a6678';ctx.font='10px monospace';ctx.fillText('avg '+avg.toFixed(0)+'ms',4,ay-4);
+  ctx.strokeStyle='#22d3ee';ctx.lineWidth=2;ctx.beginPath();
+  times.forEach((t,i)=>{const x=i/(times.length-1)*W,y=H-Math.min(t,mx)/mx*(H-20);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+  ctx.stroke();
+  // dots colored by speed
+  times.forEach((t,i)=>{const x=i/(times.length-1)*W,y=H-Math.min(t,mx)/mx*(H-20);ctx.fillStyle=t>avg*1.5?'#f87171':t<avg*0.6?'#4ade80':'#fbbf24';ctx.beginPath();ctx.arc(x,y,2.5,0,7);ctx.fill();});
+}
+function drawErrors(){
+  const cv=document.getElementById('errors'),ctx=cv.getContext('2d');cv.width=cv.clientWidth;const W=cv.width,H=cv.height;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  const keys=Object.keys(errorMap);
+  if(!keys.length){ctx.fillStyle='#4ade80';ctx.font='12px monospace';ctx.fillText('No errors yet — clean run!',12,H/2);return;}
+  const mx=Math.max(...Object.values(errorMap));const bw=W/Math.max(keys.length,8);
+  keys.forEach((k,i)=>{const h=errorMap[k]/mx*(H-30);ctx.fillStyle='#f87171';ctx.fillRect(i*bw+4,H-h-16,bw-8,h);ctx.fillStyle='#e6edf3';ctx.font='12px monospace';ctx.textAlign='center';ctx.fillText(k===' '?'␣':k,i*bw+bw/2,H-4);ctx.fillText(errorMap[k],i*bw+bw/2,H-h-20);});
+}
+document.getElementById('restart').onclick=setup;
+document.getElementById('diff').onchange=setup;
+setup();
+</script>
+</body>
+</html>

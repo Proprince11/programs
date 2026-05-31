@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural Dungeon Crawler</title>
+<style>
+  :root{--panel:#11151f;--accent:#fbbf24;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 240px;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  canvas{background:#020308;border-radius:10px;display:block;width:100%;image-rendering:pixelated}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-size:13px;cursor:pointer;width:100%;margin-top:6px}
+  button:hover{border-color:var(--accent)}
+  .stat{font-size:13px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.8}
+  .bar{height:12px;background:#1a212e;border-radius:6px;overflow:hidden;margin:4px 0}
+  .bar>div{height:100%}
+  .hint{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .log{font-size:11px;font-family:monospace;max-height:120px;overflow:auto;margin-top:8px;color:var(--muted)}
+</style>
+</head>
+<body>
+<h1>🏰 Procedural Dungeon Crawler <span style="font-size:12px;color:var(--muted)">— BSP room generation + FOV</span></h1>
+<div class="layout">
+  <div class="panel"><canvas id="cv" tabindex="0"></canvas></div>
+  <div class="panel">
+    <div class="stat">Depth: <span id="depth">1</span></div>
+    <div class="stat">HP <span id="hpv">100/100</span><div class="bar"><div id="hpbar" style="background:#ef4444;width:100%"></div></div></div>
+    <div class="stat">⚔️ ATK <span id="atk">8</span> · 🛡 DEF <span id="def">2</span></div>
+    <div class="stat">💰 Gold <span id="gold">0</span> · 🗝 Level <span id="lvl">1</span> (<span id="xp">0</span> xp)</div>
+    <button id="regen">🌀 New dungeon (BSP)</button>
+    <button id="descend">⬇ Descend stairs</button>
+    <div class="hint">Move with <b>WASD</b> / arrows. Walk into monsters to attack. Find <b>&gt;</b> stairs to descend. <b>$</b> gold, <b>!</b> potions, <b>†</b> weapons.</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const W=48,H=32,TILE=16;
+cv.width=W*TILE;cv.height=H*TILE;
+let map,rooms,player,monsters,items,stairs,depth=1,visible,seen;
+const WALL=1,FLOOR=0;
+// ---- BSP ----
+function splitBSP(node,depthLeft){
+  if(depthLeft<=0||(node.w<14&&node.h<14))return [node];
+  const horiz=node.w<node.h?true:(node.h<node.w?false:Math.random()<0.5);
+  let leaves=[];
+  if(horiz){const min=5,split=min+Math.floor(Math.random()*(node.h-min*2));if(split<min)return[node];
+    leaves=leaves.concat(splitBSP({x:node.x,y:node.y,w:node.w,h:split},depthLeft-1));
+    leaves=leaves.concat(splitBSP({x:node.x,y:node.y+split,w:node.w,h:node.h-split},depthLeft-1));}
+  else{const min=5,split=min+Math.floor(Math.random()*(node.w-min*2));if(split<min)return[node];
+    leaves=leaves.concat(splitBSP({x:node.x,y:node.y,w:split,h:node.h},depthLeft-1));
+    leaves=leaves.concat(splitBSP({x:node.x+split,y:node.y,w:node.w-split,h:node.h},depthLeft-1));}
+  return leaves;
+}
+function generate(){
+  map=Array.from({length:H},()=>new Array(W).fill(WALL));
+  const leaves=splitBSP({x:1,y:1,w:W-2,h:H-2},5);
+  rooms=[];
+  leaves.forEach(l=>{
+    const rw=Math.max(4,Math.floor(l.w*(0.6+Math.random()*0.3)));
+    const rh=Math.max(4,Math.floor(l.h*(0.6+Math.random()*0.3)));
+    const rx=l.x+Math.floor(Math.random()*(l.w-rw));
+    const ry=l.y+Math.floor(Math.random()*(l.h-rh));
+    for(let y=ry;y<ry+rh;y++)for(let x=rx;x<rx+rw;x++)if(x>0&&y>0&&x<W-1&&y<H-1)map[y][x]=FLOOR;
+    rooms.push({x:rx,y:ry,w:rw,h:rh,cx:Math.floor(rx+rw/2),cy:Math.floor(ry+rh/2)});
+  });
+  // connect rooms with L-corridors in order
+  rooms.sort((a,b)=>a.cx-b.cx);
+  for(let i=1;i<rooms.length;i++)carve(rooms[i-1],rooms[i]);
+  // entities
+  player={x:rooms[0].cx,y:rooms[0].cy,hp:player?player.hp:100,maxhp:player?player.maxhp:100,atk:player?player.atk:8,def:player?player.def:2,gold:player?player.gold:0,xp:player?player.xp:0,lvl:player?player.lvl:1};
+  stairs={x:rooms[rooms.length-1].cx,y:rooms[rooms.length-1].cy};
+  monsters=[];items=[];
+  rooms.slice(1).forEach(r=>{
+    if(Math.random()<0.7){const m=spawnMonster();monsters.push({x:r.cx,y:r.cy,...m});}
+    if(Math.random()<0.5)items.push({x:r.cx+(Math.random()<0.5?1:-1),y:r.cy,type:Math.random()<0.5?'gold':(Math.random()<0.5?'potion':'weapon')});
+  });
+  seen=Array.from({length:H},()=>new Array(W).fill(false));
+  computeFOV();
+  log(`Entered dungeon depth ${depth}. ${rooms.length} rooms generated via BSP.`);
+}
+function carve(a,b){let x=a.cx,y=a.cy;while(x!==b.cx){map[y][x]=FLOOR;x+=x<b.cx?1:-1;}while(y!==b.cy){map[y][x]=FLOOR;y+=y<b.cy?1:-1;}map[y][x]=FLOOR;}
+function spawnMonster(){const types=[{n:'rat',hp:8,atk:3,xp:5,c:'#9ca3af',g:'r'},{n:'goblin',hp:15,atk:6,xp:12,c:'#84cc16',g:'g'},{n:'orc',hp:25,atk:9,xp:25,c:'#16a34a',g:'o'},{n:'wraith',hp:35,atk:14,xp:50,c:'#a78bfa',g:'w'}];const tier=Math.min(types.length-1,Math.floor((depth-1)/2+Math.random()*2));const t=types[Math.min(tier,types.length-1)];return{name:t.n,hp:t.hp+depth*2,maxhp:t.hp+depth*2,atk:t.atk+depth,xp:t.xp,c:t.c,g:t.g};}
+// FOV: simple radius + line of sight
+function computeFOV(){
+  visible=Array.from({length:H},()=>new Array(W).fill(false));
+  const R=8;
+  for(let a=0;a<360;a+=2){const rad=a*Math.PI/180;let dx=Math.cos(rad),dy=Math.sin(rad);let x=player.x+0.5,y=player.y+0.5;
+    for(let i=0;i<R;i++){x+=dx;y+=dy;const ix=Math.floor(x),iy=Math.floor(y);if(ix<0||iy<0||ix>=W||iy>=H)break;visible[iy][ix]=true;seen[iy][ix]=true;if(map[iy][ix]===WALL)break;}}
+  visible[player.y][player.x]=true;seen[player.y][player.x]=true;
+}
+function draw(){
+  ctx.fillStyle='#020308';ctx.fillRect(0,0,cv.width,cv.height);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(!seen[y][x])continue;
+    const vis=visible[y][x];
+    if(map[y][x]===WALL){ctx.fillStyle=vis?'#3a4a63':'#161e2e';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+    else{ctx.fillStyle=vis?'#1a2436':'#0c1220';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);ctx.fillStyle=vis?'#2a3850':'#141c2c';ctx.fillRect(x*TILE+TILE/2-1,y*TILE+TILE/2-1,2,2);}
+  }
+  // stairs
+  if(seen[stairs.y][stairs.x]){ctx.fillStyle=visible[stairs.y][stairs.x]?'#fbbf24':'#7a5e12';ctx.font='14px monospace';ctx.fillText('>',stairs.x*TILE+4,stairs.y*TILE+13);}
+  // items
+  items.forEach(it=>{if(!visible[it.y][it.x])return;ctx.font='14px monospace';ctx.fillStyle=it.type==='gold'?'#fbbf24':it.type==='potion'?'#ef4444':'#22d3ee';ctx.fillText(it.type==='gold'?'$':it.type==='potion'?'!':'†',it.x*TILE+4,it.y*TILE+13);});
+  // monsters
+  monsters.forEach(m=>{if(!visible[m.y][m.x])return;ctx.fillStyle=m.c;ctx.font='bold 14px monospace';ctx.fillText(m.g,m.x*TILE+4,m.y*TILE+13);});
+  // player
+  ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.fillText('@',player.x*TILE+4,player.y*TILE+13);
+  // HUD
+  document.getElementById('depth').textContent=depth;
+  document.getElementById('hpv').textContent=`${player.hp}/${player.maxhp}`;
+  document.getElementById('hpbar').style.width=(player.hp/player.maxhp*100)+'%';
+  document.getElementById('atk').textContent=player.atk;document.getElementById('def').textContent=player.def;
+  document.getElementById('gold').textContent=player.gold;document.getElementById('lvl').textContent=player.lvl;document.getElementById('xp').textContent=player.xp;
+}
+function log(msg){const l=document.getElementById('log');const d=document.createElement('div');d.textContent='» '+msg;l.prepend(d);}
+function monsterAt(x,y){return monsters.find(m=>m.x===x&&m.y===y);}
+function tryMove(dx,dy){
+  if(player.hp<=0)return;
+  const nx=player.x+dx,ny=player.y+dy;
+  if(nx<0||ny<0||nx>=W||ny>=H||map[ny][nx]===WALL)return;
+  const m=monsterAt(nx,ny);
+  if(m){const dmg=Math.max(1,player.atk+Math.floor(Math.random()*4)-2);m.hp-=dmg;log(`You hit the ${m.name} for ${dmg}.`);if(m.hp<=0){log(`${m.name} slain! +${m.xp} xp.`);player.xp+=m.xp;monsters=monsters.filter(x=>x!==m);checkLevel();}}
+  else{player.x=nx;player.y=ny;
+    const it=items.find(i=>i.x===nx&&i.y===ny);if(it){pickup(it);items=items.filter(i=>i!==it);}
+    if(nx===stairs.x&&ny===stairs.y)log('Stairs here — press Descend or >.');}
+  monsterTurn();computeFOV();draw();
+}
+function pickup(it){if(it.type==='gold'){const g=10+depth*5+Math.floor(Math.random()*20);player.gold+=g;log(`Picked up ${g} gold.`);}else if(it.type==='potion'){player.hp=Math.min(player.maxhp,player.hp+30);log('Quaffed a potion (+30 HP).');}else{player.atk+=3;log('Found a weapon (+3 ATK).');}}
+function checkLevel(){const need=player.lvl*40;if(player.xp>=need){player.xp-=need;player.lvl++;player.maxhp+=15;player.hp=player.maxhp;player.atk+=2;player.def+=1;log(`Level up! Now level ${player.lvl}.`);}}
+function monsterTurn(){
+  monsters.forEach(m=>{
+    if(!visible[m.y][m.x])return;
+    const dx=Math.sign(player.x-m.x),dy=Math.sign(player.y-m.y);
+    const dist=Math.abs(player.x-m.x)+Math.abs(player.y-m.y);
+    if(dist===1){const dmg=Math.max(1,m.atk-player.def-Math.floor(Math.random()*2));player.hp-=dmg;log(`${m.name} hits you for ${dmg}.`);if(player.hp<=0){player.hp=0;log('💀 You died! Press New dungeon to restart.');}}
+    else{const tx=m.x+dx,ty=m.y+dy;if(map[ty]&&map[ty][tx]===FLOOR&&!monsterAt(tx,ty)&&!(tx===player.x&&ty===player.y)){if(Math.abs(dx)>Math.abs(dy)||Math.random()<0.5){if(map[m.y][m.x+dx]===FLOOR&&!monsterAt(m.x+dx,m.y))m.x+=dx;}else{if(map[m.y+dy]&&map[m.y+dy][m.x]===FLOOR&&!monsterAt(m.x,m.y+dy))m.y+=dy;}}}
+  });
+}
+function descend(){if(player.x===stairs.x&&player.y===stairs.y||true){depth++;generate();draw();}}
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();let dx=0,dy=0;
+  if(k==='w'||k==='arrowup')dy=-1;else if(k==='s'||k==='arrowdown')dy=1;else if(k==='a'||k==='arrowleft')dx=-1;else if(k==='d'||k==='arrowright')dx=1;else if(k==='>'){if(player.x===stairs.x&&player.y===stairs.y)descend();return;}else return;
+  e.preventDefault();tryMove(dx,dy);
+});
+document.getElementById('regen').onclick=()=>{player=null;depth=1;generate();draw();};
+document.getElementById('descend').onclick=()=>{if(player.x===stairs.x&&player.y===stairs.y)descend();else log('You must stand on the > stairs to descend.');};
+cv.focus();
+generate();draw();
+</script>
+</body>
+</html>

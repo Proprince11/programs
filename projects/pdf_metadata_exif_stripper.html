@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metadata / EXIF Stripper</title>
+<style>
+  :root{--panel:#11151f;--accent:#34d399;--danger:#f87171;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:980px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:6px}
+  .sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:34px;text-align:center;cursor:pointer;transition:.15s}
+  .drop.over{border-color:var(--accent);background:#0f2018}
+  .drop input{display:none}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:9px 16px;cursor:pointer;font-size:13px;margin:4px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#04221a;font-weight:600}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:12px}
+  td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;word-break:break-all}
+  th{color:var(--muted)}
+  .tag-sensitive{color:var(--danger)}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  img{max-width:100%;border-radius:8px;margin-top:8px}
+  .info{font-family:monospace;font-size:12px;color:var(--muted);line-height:1.7}
+  .badge{padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700}
+  .b-found{background:#231e10;color:#fbbf24}.b-clean{background:#0f2a1a;color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>🧹 Metadata / EXIF Stripper</h1>
+<div class="sub">Reads and removes embedded metadata (EXIF, GPS, XMP, ICC, comment segments) from images entirely in your browser — files never leave your device.</div>
+<div class="panel">
+  <div class="drop" id="drop"><input type="file" id="file" accept="image/jpeg,image/png">📂 Drop a JPEG or PNG here, or click to browse</div>
+  <div id="filemeta" class="info" style="margin-top:10px"></div>
+</div>
+<div class="grid">
+  <div class="panel">
+    <h2>Extracted metadata <span id="metaBadge"></span></h2>
+    <table id="metaTable"><tbody><tr><td style="color:var(--muted)">No file loaded</td></tr></tbody></table>
+  </div>
+  <div class="panel">
+    <h2>Preview</h2>
+    <div id="preview" class="info">—</div>
+    <div style="margin-top:10px">
+      <button class="primary" id="strip" disabled>🧹 Strip metadata &amp; download</button>
+    </div>
+    <div id="result" class="info" style="margin-top:8px"></div>
+  </div>
+</div>
+<script>
+"use strict";
+let currentBytes=null,currentType='',currentName='';
+const EXIF_TAGS={0x010F:'Make',0x0110:'Model',0x0112:'Orientation',0x0132:'DateTime',0x013B:'Artist',0x8298:'Copyright',0x829A:'ExposureTime',0x829D:'FNumber',0x8827:'ISO',0x9003:'DateTimeOriginal',0x920A:'FocalLength',0xA002:'PixelXDim',0xA003:'PixelYDim',0x8825:'GPSInfo',0x010E:'Description',0x0131:'Software'};
+const GPS_TAGS={0:'GPSVersion',1:'GPSLatitudeRef',2:'GPSLatitude',3:'GPSLongitudeRef',4:'GPSLongitude',5:'GPSAltitudeRef',6:'GPSAltitude'};
+const SENSITIVE=['GPSLatitude','GPSLongitude','GPSInfo','Artist','Copyright','DateTime','DateTimeOriginal','Make','Model','Software','Description'];
+function dv(bytes){return new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
+function parseJPEG(bytes){
+  const meta=[];const view=dv(bytes);let offset=2;const segments=[];
+  if(view.getUint16(0)!==0xFFD8)return{meta,segments:null};
+  while(offset<bytes.length){
+    if(view.getUint8(offset)!==0xFF)break;
+    const marker=view.getUint8(offset+1);
+    if(marker===0xD9||marker===0xDA)break; // EOI or SOS
+    const len=view.getUint16(offset+2);
+    segments.push({marker,offset,len:len+2});
+    if(marker===0xE1){ // APP1 EXIF
+      const start=offset+4;
+      if(bytesToStr(bytes,start,4)==='Exif'){parseExif(bytes,start+6,meta);}
+      else if(bytesToStr(bytes,start,4)==='http'){meta.push(['XMP','(XMP packet present)','XMP']);}
+    } else if(marker===0xE2){meta.push(['ICC Profile','(color profile present)','ICC']);}
+    else if(marker===0xFE){meta.push(['Comment',bytesToStr(bytes,offset+4,len-2),'COM']);}
+    offset+=2+len;
+  }
+  return{meta,segments};
+}
+function parseExif(bytes,tiffStart,meta){
+  const view=dv(bytes);const little=bytesToStr(bytes,tiffStart,2)==='II';
+  const g16=o=>view.getUint16(tiffStart+o,little);const g32=o=>view.getUint32(tiffStart+o,little);
+  function readIFD(ifdOff,tagMap){
+    const count=g16(ifdOff);
+    for(let i=0;i<count;i++){
+      const e=ifdOff+2+i*12;const tag=g16(e);const type=g16(e+2);const num=g32(e+4);
+      const name=tagMap[tag];if(!name)continue;
+      let val=readVal(e,type,num,view,tiffStart,little);
+      meta.push([name,val,'EXIF']);
+      if(tag===0x8825){try{readIFD(g32(e+8),GPS_TAGS);}catch{}}
+      if(tag===0x8769){try{readIFD(g32(e+8),EXIF_TAGS);}catch{}}
+    }
+  }
+  try{const ifd0=g32(4);readIFD(ifd0,EXIF_TAGS);}catch{}
+}
+function readVal(e,type,num,view,tiffStart,little){
+  const g16=o=>view.getUint16(o,little),g32=o=>view.getUint32(o,little);
+  const sizes={1:1,2:1,3:2,4:4,5:8,7:1,9:4,10:8};const size=(sizes[type]||1)*num;
+  let off=e+8;if(size>4)off=tiffStart+g32(e+8);
+  try{
+    if(type===2){let s='';for(let i=0;i<num-1;i++)s+=String.fromCharCode(view.getUint8(off+i));return s;}
+    if(type===3)return g16(off);
+    if(type===4)return g32(off);
+    if(type===5)return (g32(off)/g32(off+4)).toFixed(3);
+    return '['+num+' bytes]';
+  }catch{return '?';}
+}
+function bytesToStr(bytes,start,len){let s='';for(let i=0;i<len;i++)s+=String.fromCharCode(bytes[start+i]);return s;}
+function parsePNG(bytes){
+  const meta=[];const view=dv(bytes);let off=8;const chunks=[];
+  while(off<bytes.length-8){
+    const len=view.getUint32(off);const type=bytesToStr(bytes,off+4,4);
+    chunks.push({type,offset:off,total:len+12});
+    if(['tEXt','iTXt','zTXt'].includes(type)){const txt=bytesToStr(bytes,off+8,Math.min(len,120)).replace(/\0/g,': ');meta.push([type,txt,'TEXT']);}
+    else if(type==='tIME')meta.push(['Modified time','(timestamp chunk)','TIME']);
+    else if(type==='eXIf')meta.push(['eXIf','(embedded EXIF)','EXIF']);
+    if(type==='IEND')break;
+    off+=len+12;
+  }
+  return{meta,chunks};
+}
+function stripJPEG(bytes){
+  const{segments}=parseJPEG(bytes);if(!segments)return bytes;
+  const keep=[0xC0,0xC2,0xC4,0xDB,0xDD]; // SOF, DHT, DQT, DRI
+  const out=[0xFF,0xD8];
+  // find SOS start to copy compressed data
+  const view=dv(bytes);let sosOff=-1,o=2;
+  while(o<bytes.length){if(view.getUint8(o)!==0xFF){o++;continue;}const m=view.getUint8(o+1);if(m===0xDA){sosOff=o;break;}if(m===0xD9)break;const l=view.getUint16(o+2);o+=2+l;}
+  segments.forEach(s=>{const isMeta=(s.marker>=0xE0&&s.marker<=0xEF)||s.marker===0xFE;if(!isMeta){for(let i=0;i<s.len;i++)out.push(bytes[s.offset+i]);}});
+  if(sosOff>=0)for(let i=sosOff;i<bytes.length;i++)out.push(bytes[i]);
+  return new Uint8Array(out);
+}
+function stripPNG(bytes){
+  const{chunks}=parsePNG(bytes);const drop=['tEXt','iTXt','zTXt','tIME','eXIf','iCCP'];
+  const out=[];for(let i=0;i<8;i++)out.push(bytes[i]);
+  chunks.forEach(c=>{if(!drop.includes(c.type))for(let i=0;i<c.total;i++)out.push(bytes[c.offset+i]);});
+  return new Uint8Array(out);
+}
+function handle(file){
+  currentName=file.name;currentType=file.type;
+  const r=new FileReader();r.onload=()=>{currentBytes=new Uint8Array(r.result);analyze();
+    document.getElementById('preview').innerHTML='';const img=document.createElement('img');img.src=URL.createObjectURL(file);document.getElementById('preview').appendChild(img);};
+  r.readAsArrayBuffer(file);
+}
+function analyze(){
+  const{meta}=currentType==='image/png'?parsePNG(currentBytes):parseJPEG(currentBytes);
+  document.getElementById('filemeta').innerHTML=`<b>${currentName}</b> · ${currentType} · ${currentBytes.length.toLocaleString()} bytes`;
+  const tb=document.getElementById('metaTable').querySelector('tbody');
+  if(meta.length){tb.innerHTML='<tr><th>Tag</th><th>Value</th></tr>'+meta.map(([k,v,src])=>{const sens=SENSITIVE.includes(k);return `<tr><td class="${sens?'tag-sensitive':''}">${sens?'⚠ ':''}${k} <span style="color:var(--muted)">[${src}]</span></td><td>${String(v).slice(0,80)}</td></tr>`;}).join('');document.getElementById('metaBadge').innerHTML=`<span class="badge b-found">${meta.length} fields found</span>`;}
+  else{tb.innerHTML='<tr><td style="color:var(--accent)">✓ No embedded metadata detected</td></tr>';document.getElementById('metaBadge').innerHTML='<span class="badge b-clean">clean</span>';}
+  document.getElementById('strip').disabled=false;
+}
+document.getElementById('strip').onclick=()=>{
+  const cleaned=currentType==='image/png'?stripPNG(currentBytes):stripJPEG(currentBytes);
+  const blob=new Blob([cleaned],{type:currentType});
+  const a=document.createElement('a');a.download=currentName.replace(/(\.\w+)$/,'_clean$1');a.href=URL.createObjectURL(blob);a.click();
+  document.getElementById('result').innerHTML=`✓ Stripped: ${currentBytes.length.toLocaleString()} → ${cleaned.length.toLocaleString()} bytes (removed ${(currentBytes.length-cleaned.length).toLocaleString()} bytes of metadata).`;
+};
+const drop=document.getElementById('drop'),fileInput=document.getElementById('file');
+drop.onclick=()=>fileInput.click();
+fileInput.onchange=e=>{if(e.target.files[0])handle(e.target.files[0]);};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over');};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');if(e.dataTransfer.files[0])handle(e.dataTransfer.files[0]);};
+</script>
+</body>
+</html>

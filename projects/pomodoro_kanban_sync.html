@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pomodoro Kanban Sync</title>
+<style>
+  :root{--panel:#161b22;--accent:#f78166;--txt:#e6edf3;--muted:#8b949e;--line:#30363d}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:14px}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .timer{text-align:center}
+  .clock{font-size:64px;font-weight:700;font-family:monospace;margin:10px 0}
+  .ring{position:relative;width:200px;height:200px;margin:0 auto}
+  .ring svg{transform:rotate(-90deg)}
+  .mode-btns button{background:#21262d;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px 10px;cursor:pointer;font-size:12px;margin:2px}
+  .mode-btns button.active{background:var(--accent);color:#1a0c06}
+  .controls button{background:var(--accent);color:#1a0c06;border:none;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer;margin:4px}
+  .controls button.sec{background:#21262d;color:var(--txt);border:1px solid var(--line)}
+  .stat{font-size:12px;color:var(--muted);margin-top:10px}
+  .board{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .col{background:#0d1117;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:300px}
+  .col h3{font-size:13px;margin-bottom:8px;display:flex;justify-content:space-between}
+  .col.drag-over{border-color:var(--accent);background:#1a1410}
+  .card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:10px;margin-bottom:8px;cursor:grab}
+  .card.dragging{opacity:.4}
+  .card .title{font-size:13px}
+  .card .meta{font-size:11px;color:var(--muted);margin-top:4px;display:flex;justify-content:space-between;align-items:center}
+  .card .pom{color:var(--accent)}
+  .card button{background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px}
+  .addrow{display:flex;gap:6px;margin-bottom:10px}
+  .addrow input{flex:1;background:#0d1117;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px}
+  .addrow button{background:#21262d;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 12px;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>🍅 Pomodoro × Kanban Sync</h1>
+<div class="layout">
+  <div class="panel timer">
+    <div class="mode-btns" id="modes">
+      <button data-m="focus" data-min="25" class="active">Focus 25</button>
+      <button data-m="short" data-min="5">Break 5</button>
+      <button data-m="long" data-min="15">Long 15</button>
+    </div>
+    <div class="ring">
+      <svg width="200" height="200"><circle cx="100" cy="100" r="90" stroke="#30363d" stroke-width="12" fill="none"/><circle id="prog" cx="100" cy="100" r="90" stroke="#f78166" stroke-width="12" fill="none" stroke-linecap="round" stroke-dasharray="565" stroke-dashoffset="0"/></svg>
+      <div class="clock" id="clock" style="position:absolute;top:60px;left:0;width:100%;font-size:44px">25:00</div>
+    </div>
+    <div class="controls">
+      <button id="start">Start</button>
+      <button id="reset" class="sec">Reset</button>
+    </div>
+    <div class="stat" id="stat">Active task: none</div>
+    <div class="stat">🍅 Completed today: <span id="pomCount">0</span></div>
+  </div>
+  <div class="panel">
+    <div class="addrow">
+      <input id="newTask" placeholder="Add a task…">
+      <button id="add">+ Add</button>
+    </div>
+    <div class="board" id="board"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const KEY='pomokanban_v1';
+let state=load()||{tasks:[
+  {id:1,title:'Design database schema',col:'todo',poms:0,active:false},
+  {id:2,title:'Write API endpoints',col:'doing',poms:2,active:true},
+  {id:3,title:'Set up CI pipeline',col:'todo',poms:0,active:false},
+  {id:4,title:'Review pull requests',col:'done',poms:1,active:false}
+],pomCount:0,nextId:5};
+function load(){try{return JSON.parse(localStorage.getItem(KEY));}catch{return null;}}
+function save(){localStorage.setItem(KEY,JSON.stringify(state));}
+const COLS=[['todo','To Do'],['doing','In Progress'],['done','Done']];
+function render(){
+  const board=document.getElementById('board');board.innerHTML='';
+  COLS.forEach(([id,name])=>{
+    const col=document.createElement('div');col.className='col';col.dataset.col=id;
+    const count=state.tasks.filter(t=>t.col===id).length;
+    col.innerHTML=`<h3>${name}<span style="color:var(--muted)">${count}</span></h3>`;
+    state.tasks.filter(t=>t.col===id).forEach(t=>{
+      const c=document.createElement('div');c.className='card';c.draggable=true;c.dataset.id=t.id;
+      c.innerHTML=`<div class="title">${esc(t.title)}</div><div class="meta"><span class="pom">🍅 ${t.poms}</span><span>${t.active?'▶ active':''} <button data-act="active" data-id="${t.id}">⊙</button><button data-act="del" data-id="${t.id}">✕</button></span></div>`;
+      col.appendChild(c);
+    });
+    board.appendChild(col);
+  });
+  bindDnD();
+  const active=state.tasks.find(t=>t.active);
+  document.getElementById('stat').textContent='Active task: '+(active?active.title:'none');
+  document.getElementById('pomCount').textContent=state.pomCount;
+  document.querySelectorAll('[data-act]').forEach(b=>b.onclick=e=>{e.stopPropagation();const id=+b.dataset.id;if(b.dataset.act==='del')state.tasks=state.tasks.filter(t=>t.id!==id);else{state.tasks.forEach(t=>t.active=t.id===id?!t.active:false);}save();render();});
+  save();
+}
+function esc(s){return s.replace(/</g,'&lt;');}
+let dragId=null;
+function bindDnD(){
+  document.querySelectorAll('.card').forEach(c=>{
+    c.addEventListener('dragstart',()=>{dragId=+c.dataset.id;c.classList.add('dragging');});
+    c.addEventListener('dragend',()=>c.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.col').forEach(col=>{
+    col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('drag-over');});
+    col.addEventListener('dragleave',()=>col.classList.remove('drag-over'));
+    col.addEventListener('drop',()=>{col.classList.remove('drag-over');const t=state.tasks.find(t=>t.id===dragId);if(t)t.col=col.dataset.col;render();});
+  });
+}
+document.getElementById('add').onclick=()=>{const v=document.getElementById('newTask').value.trim();if(!v)return;state.tasks.push({id:state.nextId++,title:v,col:'todo',poms:0,active:false});document.getElementById('newTask').value='';render();};
+document.getElementById('newTask').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('add').click();});
+// timer
+let mode='focus',duration=25*60,remaining=25*60,running=false,interval=null;
+function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+function updateClock(){document.getElementById('clock').textContent=fmt(remaining);const frac=remaining/duration;document.getElementById('prog').setAttribute('stroke-dashoffset',565*(1-frac));}
+function tick(){remaining--;if(remaining<=0){clearInterval(interval);running=false;document.getElementById('start').textContent='Start';onComplete();}updateClock();}
+function onComplete(){
+  try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.frequency.value=660;o.connect(g);g.connect(a.destination);g.gain.value=0.1;o.start();o.stop(a.currentTime+0.5);}catch{}
+  if(mode==='focus'){state.pomCount++;const active=state.tasks.find(t=>t.active);if(active)active.poms++;save();render();}
+  alert(mode==='focus'?'Focus session complete! Take a break.':'Break over — back to work!');
+}
+document.getElementById('start').onclick=function(){if(running){clearInterval(interval);running=false;this.textContent='Resume';}else{running=true;this.textContent='Pause';interval=setInterval(tick,1000);}};
+document.getElementById('reset').onclick=()=>{clearInterval(interval);running=false;remaining=duration;updateClock();document.getElementById('start').textContent='Start';};
+document.querySelectorAll('#modes button').forEach(b=>b.onclick=function(){document.querySelectorAll('#modes button').forEach(x=>x.classList.remove('active'));this.classList.add('active');mode=this.dataset.m;duration=remaining=+this.dataset.min*60;clearInterval(interval);running=false;document.getElementById('start').textContent='Start';updateClock();});
+render();updateClock();
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Second Brain Graph</title>
+<style>
+  :root{--panel:#11151f;--accent:#7c9cf5;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+  header h1{font-size:16px}
+  .main{flex:1;display:grid;grid-template-columns:250px 1fr 1fr;min-height:0}
+  .col{border-right:1px solid var(--line);overflow:auto;padding:12px}
+  .note-item{padding:8px 10px;border-radius:7px;cursor:pointer;font-size:13px;margin-bottom:4px}
+  .note-item:hover{background:#1a212e}
+  .note-item.active{background:var(--accent);color:#0a0f1f}
+  textarea{width:100%;height:100%;background:#05080f;border:none;color:#cbd5e1;padding:14px;font-family:'SF Mono',monospace;font-size:13px;resize:none;line-height:1.6}
+  .preview{padding:16px;overflow:auto;line-height:1.7}
+  .preview a{color:var(--accent);cursor:pointer;text-decoration:none;border-bottom:1px dashed var(--accent)}
+  .preview a.broken{color:#f87171;border-color:#f87171}
+  canvas{display:block}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px 12px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--accent)}
+  .section{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px}
+  .backlinks{font-size:12px}
+  .graphwrap{position:relative}
+  #graph{position:absolute;inset:0}
+  .tag{display:inline-block;background:#1a212e;color:var(--accent);font-size:11px;padding:1px 7px;border-radius:8px;margin:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧩 Markdown Second Brain</h1>
+  <button id="newNote">+ New note</button>
+  <button id="toggleView">Toggle: Editor | Graph</button>
+  <span style="font-size:12px;color:var(--muted)">Use [[Note Title]] for bi-directional links</span>
+</header>
+<div class="main">
+  <div class="col">
+    <div class="section">Notes</div>
+    <div id="noteList"></div>
+    <div class="section">Backlinks → current</div>
+    <div class="backlinks" id="backlinks"></div>
+    <div class="section">Tags</div>
+    <div id="tags"></div>
+  </div>
+  <div class="col" style="padding:0" id="editorCol">
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+  <div class="col preview" id="previewCol"></div>
+</div>
+<canvas id="graph" style="display:none"></canvas>
+<script>
+"use strict";
+const KEY='secondbrain_v1';
+let notes=load()||{
+  'Home':'# Home\n\nWelcome to your [[Second Brain]]. Connect ideas with wiki-links.\n\nSee also [[Zettelkasten]] and [[Projects]]. #index',
+  'Second Brain':'# Second Brain\n\nA personal knowledge graph. Notes link to each other via [[Home]].\n\nInspired by [[Zettelkasten]]. #pkm',
+  'Zettelkasten':'# Zettelkasten\n\nAtomic notes with unique links. Backbone of [[Second Brain]]. #pkm #method',
+  'Projects':'# Projects\n\n- [[Project Alpha]]\n- Link back to [[Home]]\n\n#work',
+  'Project Alpha':'# Project Alpha\n\nReferenced from [[Projects]]. Needs a [[Zettelkasten]] index. #work'
+};
+let current=Object.keys(notes)[0];
+function load(){try{return JSON.parse(localStorage.getItem(KEY));}catch{return null;}}
+function save(){localStorage.setItem(KEY,JSON.stringify(notes));}
+function linksOf(text){const m=[...text.matchAll(/\[\[([^\]]+)\]\]/g)];return m.map(x=>x[1].trim());}
+function tagsOf(text){return [...text.matchAll(/(?:^|\s)#([a-zA-Z0-9_-]+)/g)].map(x=>x[1]);}
+function esc(s){return s.replace(/</g,'&lt;');}
+function renderMarkdown(text){
+  let html=esc(text)
+    .replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/\*([^*]+)\*/g,'<em>$1</em>')
+    .replace(/^- (.*)$/gm,'<li>$1</li>')
+    .replace(/(?:^|\s)#([a-zA-Z0-9_-]+)/g,' <span class="tag">#$1</span>');
+  html=html.replace(/\[\[([^\]]+)\]\]/g,(m,t)=>{t=t.trim();const exists=notes[t]!==undefined;return `<a class="${exists?'':'broken'}" data-link="${t}">${t}</a>`;});
+  html=html.replace(/(<li>.*<\/li>)/s,'<ul>$1</ul>').replace(/\n/g,'<br>');
+  return html;
+}
+function renderList(){
+  document.getElementById('noteList').innerHTML=Object.keys(notes).map(n=>`<div class="note-item ${n===current?'active':''}" data-n="${n}">${n}</div>`).join('');
+  document.querySelectorAll('.note-item').forEach(el=>el.onclick=()=>{current=el.dataset.n;open();});
+}
+function open(){
+  document.getElementById('editor').value=notes[current];
+  renderPreview();renderList();renderBacklinks();renderTags();if(graphMode)drawGraph();
+}
+function renderPreview(){
+  const pv=document.getElementById('previewCol');pv.innerHTML=renderMarkdown(notes[current]);
+  pv.querySelectorAll('a[data-link]').forEach(a=>a.onclick=()=>{const t=a.dataset.link;if(!notes[t])notes[t]='# '+t+'\n\n';current=t;save();open();});
+}
+function renderBacklinks(){
+  const back=Object.keys(notes).filter(n=>n!==current&&linksOf(notes[n]).includes(current));
+  document.getElementById('backlinks').innerHTML=back.length?back.map(n=>`<div class="note-item" data-n="${n}">← ${n}</div>`).join(''):'<span style="color:var(--muted);font-size:12px">none</span>';
+  document.querySelectorAll('#backlinks .note-item').forEach(el=>el.onclick=()=>{current=el.dataset.n;open();});
+}
+function renderTags(){
+  const all={};Object.values(notes).forEach(t=>tagsOf(t).forEach(tag=>all[tag]=(all[tag]||0)+1));
+  document.getElementById('tags').innerHTML=Object.entries(all).map(([t,c])=>`<span class="tag">#${t} ${c}</span>`).join('');
+}
+document.getElementById('editor').oninput=e=>{notes[current]=e.target.value;save();renderPreview();renderBacklinks();renderTags();renderList();};
+document.getElementById('newNote').onclick=()=>{let n=prompt('Note title:');if(n&&!notes[n]){notes[n]='# '+n+'\n\n';current=n;save();open();}};
+// graph view
+let graphMode=false;const cv=document.getElementById('graph');
+let gnodes=[],glinks=[];
+function buildGraph(){
+  gnodes=Object.keys(notes).map((n,i)=>({id:n,x:innerWidth/2+Math.cos(i)*200,y:innerHeight/2+Math.sin(i)*200,vx:0,vy:0}));
+  glinks=[];Object.keys(notes).forEach(n=>linksOf(notes[n]).forEach(t=>{if(notes[t])glinks.push([n,t]);}));
+}
+function drawGraph(){
+  cv.width=innerWidth;cv.height=innerHeight-52;const ctx=cv.getContext('2d');
+  // physics tick
+  for(let i=0;i<gnodes.length;i++)for(let j=i+1;j<gnodes.length;j++){const a=gnodes[i],b=gnodes[j];let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1;const f=4000/(d*d);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}
+  glinks.forEach(([s,t])=>{const a=gnodes.find(n=>n.id===s),b=gnodes.find(n=>n.id===t);if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1;const f=(d-120)*0.02;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;});
+  gnodes.forEach(n=>{n.vx+=(cv.width/2-n.x)*0.001;n.vy+=(cv.height/2-n.y)*0.001;n.x+=n.vx;n.y+=n.vy;n.vx*=0.85;n.vy*=0.85;});
+  ctx.fillStyle='#070a11';ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle='#2f3a52';glinks.forEach(([s,t])=>{const a=gnodes.find(n=>n.id===s),b=gnodes.find(n=>n.id===t);if(!a||!b)return;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();});
+  gnodes.forEach(n=>{const deg=glinks.filter(l=>l[0]===n.id||l[1]===n.id).length;const r=6+deg*2;ctx.fillStyle=n.id===current?'#fff':'#7c9cf5';ctx.beginPath();ctx.arc(n.x,n.y,r,0,7);ctx.fill();ctx.fillStyle='#cbd5e1';ctx.font='12px system-ui';ctx.fillText(n.id,n.x+r+3,n.y+4);});
+  if(graphMode)requestAnimationFrame(drawGraph);
+}
+cv.addEventListener('click',e=>{const n=gnodes.find(n=>Math.hypot(e.clientX-n.x,e.clientY-(n.y))<14);if(n){current=n.id;graphMode=false;cv.style.display='none';document.querySelector('.main').style.display='grid';open();}});
+document.getElementById('toggleView').onclick=()=>{graphMode=!graphMode;if(graphMode){buildGraph();document.querySelector('.main').style.display='none';cv.style.display='block';drawGraph();}else{cv.style.display='none';document.querySelector('.main').style.display='grid';}};
+open();
+</script>
+</body>
+</html>

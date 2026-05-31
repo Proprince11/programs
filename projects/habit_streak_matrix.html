@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Habit Streak Matrix</title>
+<style>
+  :root{--panel:#161b22;--accent:#39d353;--txt:#e6edf3;--muted:#8b949e;--line:#30363d}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;color:var(--txt);font-family:system-ui,sans-serif;padding:18px;max-width:1080px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .habit-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .habit-head h2{font-size:15px}
+  select,button,input{background:#0d1117;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-size:13px}
+  button{cursor:pointer}button:hover{border-color:var(--accent)}
+  .grid-wrap{overflow-x:auto;padding-bottom:6px}
+  .cal{display:grid;grid-template-rows:repeat(7,13px);grid-auto-flow:column;gap:3px}
+  .cell{width:13px;height:13px;border-radius:3px;background:#161b22;border:1px solid #21262d;cursor:pointer}
+  .months{display:grid;grid-auto-flow:column;font-size:10px;color:var(--muted);margin-bottom:4px;padding-left:30px}
+  .stats{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px}
+  .stat{text-align:center}.stat .v{font-size:24px;font-weight:700;color:var(--accent)}.stat .l{font-size:11px;color:var(--muted)}
+  .legend{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);justify-content:flex-end;margin-top:8px}
+  .legend .cell{cursor:default}
+  .daylabels{display:grid;grid-template-rows:repeat(7,13px);gap:3px;font-size:9px;color:var(--muted);margin-right:4px;padding-top:0}
+  .row{display:flex}
+</style>
+</head>
+<body>
+<h1>🔥 Habit Streak Matrix <span style="font-size:12px;color:var(--muted)">— a year of contributions, GitHub-style</span></h1>
+<div class="panel">
+  <div class="habit-head">
+    <h2 id="title">Daily habit tracker</h2>
+    <select id="habitSel"></select>
+    <input id="newHabit" placeholder="New habit name…" style="width:160px">
+    <button id="addHabit">+ Add habit</button>
+    <button id="delHabit">Delete</button>
+    <button id="randomize">Demo data</button>
+  </div>
+  <div class="months" id="months"></div>
+  <div class="row">
+    <div class="daylabels"><span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span></div>
+    <div class="grid-wrap"><div class="cal" id="cal"></div></div>
+  </div>
+  <div class="legend">Less <div class="cell" style="background:#161b22"></div><div class="cell" style="background:#0e4429"></div><div class="cell" style="background:#006d32"></div><div class="cell" style="background:#26a641"></div><div class="cell" style="background:#39d353"></div> More</div>
+  <div class="stats" id="stats"></div>
+</div>
+<script>
+"use strict";
+const KEY='habitmatrix_v1';
+let data=load()||{habits:{'Code':{},'Exercise':{},'Read':{}},current:'Code'};
+function load(){try{return JSON.parse(localStorage.getItem(KEY));}catch{return null;}}
+function save(){localStorage.setItem(KEY,JSON.stringify(data));}
+function dayKey(d){return d.toISOString().slice(0,10);}
+const LEVELS=['#161b22','#0e4429','#006d32','#26a641','#39d353'];
+function startDate(){const d=new Date();d.setDate(d.getDate()-364);while(d.getDay()!==0)d.setDate(d.getDate()-1);return d;}
+function render(){
+  // habit selector
+  const sel=document.getElementById('habitSel');sel.innerHTML=Object.keys(data.habits).map(h=>`<option ${h===data.current?'selected':''}>${h}</option>`).join('');
+  const habit=data.habits[data.current];
+  const cal=document.getElementById('cal');cal.innerHTML='';
+  const start=startDate();const today=new Date();today.setHours(0,0,0,0);
+  let cur=new Date(start);const monthCols=[];let col=0;
+  const cells=[];
+  while(cur<=today){
+    const k=dayKey(cur);const val=habit[k]||0;
+    const cell=document.createElement('div');cell.className='cell';cell.style.background=LEVELS[val];
+    cell.title=`${k}: ${val?'level '+val:'none'}`;
+    const dd=new Date(cur);
+    cell.onclick=()=>{habit[k]=((habit[k]||0)+1)%5;save();render();};
+    cal.appendChild(cell);
+    if(cur.getDate()<=7&&cur.getDay()===0)monthCols.push({col:Math.floor(cells.length/7),m:cur.getMonth()});
+    cells.push(cur);
+    cur.setDate(cur.getDate()+1);
+  }
+  // months header
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mEl=document.getElementById('months');mEl.style.gridTemplateColumns=`repeat(${Math.ceil(cells.length/7)},13px)`;
+  let mh='';let lastM=-1;for(let c=0;c<Math.ceil(cells.length/7);c++){const idx=c*7;const d=cells[idx];if(d&&d.getMonth()!==lastM){mh+=`<span style="grid-column:${c+1}">${MON[d.getMonth()]}</span>`;lastM=d.getMonth();}}
+  mEl.innerHTML=mh;
+  // stats
+  const done=Object.values(habit).filter(v=>v>0).length;
+  let cur2=0,best=0,c=0;const sorted=Object.keys(habit).sort();
+  // compute current streak ending today
+  let d=new Date(today);while(habit[dayKey(d)]>0){cur2++;d.setDate(d.getDate()-1);}
+  // best streak
+  let prev=null,run=0;for(const k of sorted){if(habit[k]>0){run++;best=Math.max(best,run);}else run=0;}
+  const total=Object.values(habit).reduce((a,b)=>a+(b>0?1:0),0);
+  document.getElementById('stats').innerHTML=
+   `<div class="stat"><div class="v">${cur2}</div><div class="l">current streak</div></div>
+    <div class="stat"><div class="v">${best}</div><div class="l">longest streak</div></div>
+    <div class="stat"><div class="v">${total}</div><div class="l">active days (yr)</div></div>
+    <div class="stat"><div class="v">${(total/365*100).toFixed(0)}%</div><div class="l">consistency</div></div>`;
+  document.getElementById('title').textContent=data.current;
+}
+document.getElementById('habitSel').onchange=e=>{data.current=e.target.value;save();render();};
+document.getElementById('addHabit').onclick=()=>{const v=document.getElementById('newHabit').value.trim();if(v&&!data.habits[v]){data.habits[v]={};data.current=v;document.getElementById('newHabit').value='';save();render();}};
+document.getElementById('delHabit').onclick=()=>{if(Object.keys(data.habits).length<=1)return;delete data.habits[data.current];data.current=Object.keys(data.habits)[0];save();render();};
+document.getElementById('randomize').onclick=()=>{const h=data.habits[data.current];const start=startDate(),today=new Date();let cur=new Date(start);while(cur<=today){if(Math.random()<0.55)h[dayKey(cur)]=1+Math.floor(Math.random()*4);cur.setDate(cur.getDate()+1);}save();render();};
+render();
+</script>
+</body>
+</html>

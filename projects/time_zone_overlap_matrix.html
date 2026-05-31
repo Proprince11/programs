@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Time Zone Overlap Matrix</title>
+<style>
+  :root{--panel:#11151f;--accent:#38bdf8;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--work:#34d399;--ok:#fbbf24;--off:#1a212e}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1150px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:10px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  select,input{background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 12px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+  .matrix{overflow-x:auto}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:center;font-size:11px;font-family:monospace;border:1px solid #0d1117}
+  .zonecell{text-align:left;padding:6px 10px;white-space:nowrap;font-size:13px;font-family:system-ui;background:#05080f;position:sticky;left:0}
+  .zonecell b{color:var(--accent)}
+  .hourcell{width:30px;height:38px;position:relative}
+  .hr{font-size:13px;font-weight:600}
+  .ampm{font-size:9px;color:rgba(255,255,255,0.5)}
+  .head th{padding:4px 0;color:var(--muted)}
+  .overlap-bar{height:24px;display:flex;margin-top:6px}
+  .overlap-bar div{flex:1;border-right:1px solid #0d1117}
+  .legend{display:flex;gap:16px;font-size:12px;margin-top:10px;flex-wrap:wrap}
+  .legend span{display:flex;align-items:center;gap:5px}.sw{width:14px;height:14px;border-radius:3px}
+  .remove{cursor:pointer;color:var(--muted)}.remove:hover{color:#f87171}
+</style>
+</head>
+<body>
+<h1>🌍 Time Zone Overlap Matrix</h1>
+<div class="panel">
+  <div class="controls">
+    <select id="zonePick"></select>
+    <button id="add">+ Add zone</button>
+    <label style="color:var(--muted);font-size:12px">Work hours: <input id="wStart" type="number" value="9" min="0" max="23" style="width:60px"> to <input id="wEnd" type="number" value="17" min="1" max="24" style="width:60px"></label>
+    <label style="color:var(--muted);font-size:12px">Reference (your) hour: <input id="refHour" type="range" min="0" max="23" value="10"><span id="refHourV">10:00</span></label>
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--work)"></span>Core work hours (all overlap)</span>
+    <span><span class="sw" style="background:var(--ok)"></span>Work hours (single zone)</span>
+    <span><span class="sw" style="background:var(--off)"></span>Off hours</span>
+  </div>
+</div>
+<div class="panel matrix">
+  <table id="matrix"></table>
+  <div style="margin-top:10px;font-size:13px" id="bestslot"></div>
+</div>
+<script>
+"use strict";
+const ZONES=[
+  {name:'San Francisco',tz:'America/Los_Angeles'},{name:'New York',tz:'America/New_York'},
+  {name:'São Paulo',tz:'America/Sao_Paulo'},{name:'London',tz:'Europe/London'},
+  {name:'Berlin',tz:'Europe/Berlin'},{name:'Dubai',tz:'Asia/Dubai'},
+  {name:'Mumbai',tz:'Asia/Kolkata'},{name:'Singapore',tz:'Asia/Singapore'},
+  {name:'Tokyo',tz:'Asia/Tokyo'},{name:'Sydney',tz:'Australia/Sydney'},{name:'Auckland',tz:'Pacific/Auckland'}
+];
+let selected=['America/Los_Angeles','Europe/London','Asia/Kolkata','Asia/Tokyo'];
+// get UTC offset (in hours) for a tz right now
+function offsetHours(tz){
+  const now=new Date();
+  const local=new Date(now.toLocaleString('en-US',{timeZone:tz}));
+  const utc=new Date(now.toLocaleString('en-US',{timeZone:'UTC'}));
+  return Math.round((local-utc)/3600000*2)/2;
+}
+function P(id){return +document.getElementById(id).value;}
+function render(){
+  const pick=document.getElementById('zonePick');
+  pick.innerHTML=ZONES.filter(z=>!selected.includes(z.tz)).map(z=>`<option value="${z.tz}">${z.name} (UTC${fmtOff(offsetHours(z.tz))})</option>`).join('');
+  const wStart=P('wStart'),wEnd=P('wEnd'),refHour=P('refHour');
+  document.getElementById('refHourV').textContent=String(refHour).padStart(2,'0')+':00';
+  // reference is first selected zone's local time = refHour; compute UTC base
+  const refTz=selected[0];const refOff=offsetHours(refTz);
+  const utcBase=refHour-refOff; // utc hour corresponding to refHour in ref zone
+  let html='<tr class="head"><th class="zonecell">Zone</th>';
+  for(let h=0;h<24;h++)html+=`<th>${h}</th>`;html+='</tr>';
+  const overlapCount=new Array(24).fill(0);
+  const rows=selected.map(tz=>{
+    const z=ZONES.find(z=>z.tz===tz);const off=offsetHours(tz);
+    let row=`<tr><td class="zonecell"><b>${z.name}</b> UTC${fmtOff(off)} <span class="remove" data-tz="${tz}">✕</span></td>`;
+    for(let col=0;col<24;col++){
+      // utc hour for this column = utcBase + col offset from refHour... we display 24 cols as the reference zone's hours 0-23
+      const utcHour=((col-refOff)%24+24)%24; // when reference shows 'col', utc = col-refOff
+      const localHour=((utcHour+off)%24+24)%24;
+      const isWork=localHour>=wStart&&localHour<wEnd;
+      if(isWork)overlapCount[col]++;
+      const isRef=col===refHour;
+      row+=`<td class="hourcell" data-col="${col}"><div class="hr">${String(localHour).padStart(2,'0')}</div><div class="ampm">${localHour<12?'am':'pm'}</div></td>`;
+    }
+    return row+'</tr>';
+  });
+  // color cells after computing overlap
+  html+=rows.join('');
+  document.getElementById('matrix').innerHTML=html;
+  // apply colors
+  const trs=document.querySelectorAll('#matrix tr');
+  selected.forEach((tz,ri)=>{
+    const off=offsetHours(tz);const tds=trs[ri+1].querySelectorAll('.hourcell');
+    tds.forEach((td,col)=>{
+      const utcHour=((col-refOff)%24+24)%24;const localHour=((utcHour+off)%24+24)%24;
+      const isWork=localHour>=wStart&&localHour<wEnd;
+      const allOverlap=overlapCount[col]===selected.length;
+      td.style.background=isWork?(allOverlap?'var(--work)':'var(--ok)'):'var(--off)';
+      td.style.color=isWork?'#04221a':'#5a6678';
+      if(col===refHour)td.style.outline='2px solid #fff';
+    });
+  });
+  document.querySelectorAll('.remove').forEach(r=>r.onclick=()=>{if(selected.length>1){selected=selected.filter(t=>t!==r.dataset.tz);render();}});
+  // best slot
+  let best=-1,bestC=-1;for(let c=0;c<24;c++)if(overlapCount[c]>bestC){bestC=overlapCount[c];best=c;}
+  const goldRun=[];for(let c=0;c<24;c++)if(overlapCount[c]===selected.length)goldRun.push(c);
+  document.getElementById('bestslot').innerHTML=goldRun.length?
+    `✅ <b>${goldRun.length} hour(s)</b> where all ${selected.length} zones are within work hours (reference hours: ${goldRun.map(h=>h+':00').join(', ')}).`:
+    `⚠ No hour overlaps all ${selected.length} zones. Best slot covers ${bestC}/${selected.length} zones at reference ${best}:00.`;
+}
+function fmtOff(o){return (o>=0?'+':'')+o;}
+document.getElementById('add').onclick=()=>{const v=document.getElementById('zonePick').value;if(v&&!selected.includes(v)){selected.push(v);render();}};
+['wStart','wEnd','refHour'].forEach(id=>document.getElementById(id).oninput=render);
+render();
+</script>
+</body>
+</html>

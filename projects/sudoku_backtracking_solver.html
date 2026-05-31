@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sudoku Backtracking Solver</title>
+<style>
+  :root{--panel:#11151f;--accent:#34d399;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:auto 260px;gap:20px;align-items:start;justify-content:center}
+  .grid{display:grid;grid-template-columns:repeat(9,48px);grid-template-rows:repeat(9,48px);background:#444;gap:1px;border:3px solid #666;border-radius:4px}
+  .cell{background:#0d1117;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;position:relative}
+  .cell input{width:100%;height:100%;background:none;border:none;color:#60a5fa;text-align:center;font-size:22px;outline:none}
+  .cell.given{color:#e6edf3;font-weight:700}
+  .cell.solving{background:#1e3a2e}
+  .cell.try{background:#3a2e1e;color:#fbbf24}
+  .cell.backtrack{background:#3a1e1e}
+  .cell.solved{color:#34d399}
+  /* 3x3 box borders */
+  .cell:nth-child(9n+4),.cell:nth-child(9n+7){border-left:2px solid #666}
+  .grid>.cell:nth-child(n+28):nth-child(-n+36),.grid>.cell:nth-child(n+55):nth-child(-n+63){border-top:2px solid #666}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  button,select{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:9px;font-size:13px;cursor:pointer;width:100%;margin-top:6px}
+  button:hover{border-color:var(--accent)}
+  label{font-size:12px;color:var(--muted);display:block;margin-top:8px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .stat{font-size:13px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.8}
+  .stat b{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>🔢 Sudoku Backtracking Solver <span style="font-size:12px;color:var(--muted)">— recursive constraint satisfaction</span></h1>
+<div class="layout">
+  <div class="grid" id="grid"></div>
+  <div class="panel">
+    <button id="solve">▶ Solve (animated)</button>
+    <button id="solveInstant">⚡ Solve instantly</button>
+    <button id="step">Step ▷</button>
+    <button id="stop">⏸ Stop</button>
+    <label>Speed <span id="spv">50</span></label><input type="range" id="speed" min="1" max="100" value="50">
+    <label>Heuristic</label>
+    <select id="heur"><option value="mrv">MRV (most constrained first)</option><option value="order">In-order (naive)</option></select>
+    <button id="newPuzzle">🎲 New puzzle</button>
+    <select id="diff"><option value="40">Easy</option><option value="50">Medium</option><option value="55">Hard</option><option value="60">Expert</option></select>
+    <button id="clear">Clear board</button>
+    <div class="stat" id="stat"></div>
+  </div>
+</div>
+<script>
+"use strict";
+let board=Array.from({length:9},()=>new Array(9).fill(0));
+let given=Array.from({length:9},()=>new Array(9).fill(false));
+let cells=[],running=false,gen=null,backtracks=0,steps=0;
+function build(){
+  const g=document.getElementById('grid');g.innerHTML='';cells=[];
+  for(let r=0;r<9;r++)for(let c=0;c<9;c++){
+    const cell=document.createElement('div');cell.className='cell';
+    const inp=document.createElement('input');inp.maxLength=1;
+    inp.oninput=()=>{const v=parseInt(inp.value)||0;board[r][c]=(v>=1&&v<=9)?v:0;given[r][c]=board[r][c]!==0;inp.value=board[r][c]||'';cell.classList.toggle('given',given[r][c]);};
+    cell.appendChild(inp);g.appendChild(cell);cells.push({cell,inp,r,c});
+  }
+}
+function valid(b,r,c,v){
+  for(let i=0;i<9;i++)if(b[r][i]===v||b[i][c]===v)return false;
+  const br=r-r%3,bc=c-c%3;
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++)if(b[br+i][bc+j]===v)return false;
+  return true;
+}
+function findEmpty(b,heur){
+  if(heur==='order'){for(let r=0;r<9;r++)for(let c=0;c<9;c++)if(b[r][c]===0)return[r,c];return null;}
+  // MRV: cell with fewest candidates
+  let best=null,bestCount=10;
+  for(let r=0;r<9;r++)for(let c=0;c<9;c++){if(b[r][c])continue;let count=0;for(let v=1;v<=9;v++)if(valid(b,r,c,v))count++;if(count<bestCount){bestCount=count;best=[r,c];if(count<=1)return best;}}
+  return best;
+}
+// generator-based solver for animation
+function* solve(b,heur){
+  const pos=findEmpty(b,heur);
+  if(!pos){yield{done:true};return true;}
+  const[r,c]=pos;
+  for(let v=1;v<=9;v++){
+    if(valid(b,r,c,v)){
+      b[r][c]=v;steps++;yield{r,c,v,type:'try'};
+      if(yield* solve(b,heur))return true;
+      b[r][c]=0;backtracks++;yield{r,c,v:0,type:'backtrack'};
+    }
+  }
+  return false;
+}
+function render(highlight){
+  cells.forEach(({cell,inp,r,c})=>{
+    inp.value=board[r][c]||'';
+    cell.className='cell'+(given[r][c]?' given':'');
+    if(highlight&&highlight.r===r&&highlight.c===c)cell.classList.add(highlight.type==='backtrack'?'backtrack':'try');
+    if(!given[r][c]&&board[r][c])inp.style.color='#60a5fa';
+  });
+}
+function loop(){
+  if(!running)return;
+  const speed=+document.getElementById('speed').value;
+  const iters=Math.ceil(speed/3);
+  let last=null,finished=false;
+  for(let i=0;i<iters;i++){const nx=gen.next();if(nx.done){finished=true;break;}last=nx.value;if(last.done){finished=true;break;}}
+  if(last&&!last.done){const{r,c,v,type}=last;if(type==='try')board[r][c]=v;else board[r][c]=0;render(last);}
+  updateStat(finished);
+  if(finished){running=false;cells.forEach(({cell,r,c})=>{if(!given[r][c])cell.querySelector('input').style.color='#34d399';});document.getElementById('stat').innerHTML+='<br><b>✓ Solved!</b>';return;}
+  requestAnimationFrame(loop);
+}
+function updateStat(done){document.getElementById('stat').innerHTML=`steps: <b>${steps}</b><br>backtracks: <b>${backtracks}</b><br>status: ${done?'complete':running?'solving…':'idle'}`;}
+function startSolve(){steps=0;backtracks=0;gen=solve(board,document.getElementById('heur').value);running=true;loop();}
+document.getElementById('solve').onclick=startSolve;
+document.getElementById('solveInstant').onclick=()=>{steps=0;backtracks=0;const g=solve(board,document.getElementById('heur').value);let r=g.next();while(!r.done)r=g.next();render();updateStat(true);cells.forEach(({cell,r,c})=>{if(!given[r][c])cell.querySelector('input').style.color='#34d399';});};
+document.getElementById('step').onclick=()=>{if(!gen){gen=solve(board,document.getElementById('heur').value);steps=0;backtracks=0;}const nx=gen.next();if(!nx.done&&nx.value&&!nx.value.done){const{r,c,v,type}=nx.value;if(type==='try')board[r][c]=v;else board[r][c]=0;render(nx.value);}updateStat(nx.done);};
+document.getElementById('stop').onclick=()=>{running=false;updateStat(false);};
+document.getElementById('speed').oninput=function(){document.getElementById('spv').textContent=this.value;};
+document.getElementById('clear').onclick=()=>{board=Array.from({length:9},()=>new Array(9).fill(0));given=board.map(r=>r.map(()=>false));gen=null;render();updateStat(false);};
+// puzzle generation
+function genFull(){const b=Array.from({length:9},()=>new Array(9).fill(0));function fill(){const pos=findEmpty(b,'order');if(!pos)return true;const[r,c]=pos;const nums=[1,2,3,4,5,6,7,8,9].sort(()=>Math.random()-0.5);for(const v of nums){if(valid(b,r,c,v)){b[r][c]=v;if(fill())return true;b[r][c]=0;}}return false;}fill();return b;}
+document.getElementById('newPuzzle').onclick=()=>{
+  const full=genFull();const remove=+document.getElementById('diff').value;
+  board=full.map(r=>r.slice());const positions=[];for(let i=0;i<81;i++)positions.push(i);positions.sort(()=>Math.random()-0.5);
+  for(let i=0;i<remove;i++){const p=positions[i];board[p/9|0][p%9]=0;}
+  given=board.map(r=>r.map(v=>v!==0));gen=null;render();updateStat(false);
+};
+build();document.getElementById('newPuzzle').click();
+</script>
+</body>
+</html>
