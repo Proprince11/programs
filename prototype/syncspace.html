@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SyncSpace — B2B Project Management</title>
+<!--
+  SyncSpace single-file prototype
+  --------------------------------------------------------------------
+  Tech : Tailwind CSS via CDN, vanilla JS, Mermaid.js for DFD (CDN).
+  State: in-memory only; mirrors the seed data of db/02_schema_and_seed.sql
+  Safety: all user-visible strings pass through escapeHtml() before injection.
+  Compatibility: works by double-clicking the file in any modern browser.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --ss-bg:        #0b1020;
+    --ss-bg-2:      #111733;
+    --ss-panel:     #161d3f;
+    --ss-line:      #283057;
+    --ss-text:      #e6ecff;
+    --ss-muted:     #8c98c4;
+    --ss-accent:    #7c5cff;
+    --ss-accent-2:  #22d3ee;
+    --ss-good:      #34d399;
+    --ss-warn:      #fbbf24;
+    --ss-bad:       #f87171;
+  }
+  html, body { background: var(--ss-bg); color: var(--ss-text); font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  .ss-panel  { background: var(--ss-panel); border: 1px solid var(--ss-line); border-radius: 14px; }
+  .ss-card   { background: var(--ss-bg-2);  border: 1px solid var(--ss-line); border-radius: 12px; }
+  .ss-muted  { color: var(--ss-muted); }
+  .ss-grad   { background: linear-gradient(135deg, var(--ss-accent), var(--ss-accent-2)); }
+  .ss-text-grad {
+    background: linear-gradient(135deg, var(--ss-accent), var(--ss-accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .nav-item       { color: var(--ss-muted); transition: all .15s; }
+  .nav-item:hover { background: var(--ss-bg-2); color: var(--ss-text); }
+  .nav-item.active{ background: var(--ss-bg-2); color: var(--ss-text); border-left: 3px solid var(--ss-accent); }
+  .btn-primary { background: var(--ss-accent); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .pill { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill-good   { background: rgba(52,211,153,.15);  color: var(--ss-good); }
+  .pill-warn   { background: rgba(251,191,36,.15);  color: var(--ss-warn); }
+  .pill-bad    { background: rgba(248,113,113,.15); color: var(--ss-bad);  }
+  .pill-info   { background: rgba(34,211,238,.15);  color: var(--ss-accent-2); }
+  .pill-neutral{ background: rgba(140,152,196,.15); color: var(--ss-muted); }
+  /* progress bars */
+  .pbar       { height: 8px; background: var(--ss-line); border-radius: 999px; overflow: hidden; }
+  .pbar > div { height: 100%; background: linear-gradient(90deg, var(--ss-accent), var(--ss-accent-2)); }
+  /* form controls */
+  input, select, textarea {
+    background: var(--ss-bg);
+    border: 1px solid var(--ss-line);
+    color: var(--ss-text);
+    border-radius: 8px;
+    padding: 9px 12px;
+    width: 100%;
+    font-size: 14px;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--ss-accent); outline-offset: 0; }
+  label { font-size: 12px; color: var(--ss-muted); display: block; margin-bottom: 4px; }
+  /* erd nodes */
+  .erd-table { background: var(--ss-bg-2); border: 1px solid var(--ss-line); border-radius: 10px; min-width: 220px; font-size: 12px; }
+  .erd-table h4 { background: var(--ss-accent); color: #fff; padding: 6px 10px; border-radius: 9px 9px 0 0; font-size: 12px; font-weight: 700; }
+  .erd-table ul { padding: 8px 10px; }
+  .erd-table li { padding: 2px 0; color: var(--ss-text); }
+  .erd-table li.pk  { color: var(--ss-warn); font-weight: 600; }
+  .erd-table li.fk  { color: var(--ss-accent-2); }
+  /* kanban */
+  .kanban-col { background: var(--ss-bg-2); border: 1px solid var(--ss-line); border-radius: 12px; padding: 12px; min-height: 380px; }
+  .kanban-card { background: var(--ss-panel); border: 1px solid var(--ss-line); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+  /* table */
+  table.ss-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.ss-tbl th, table.ss-tbl td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--ss-line); }
+  table.ss-tbl th { color: var(--ss-muted); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
+  table.ss-tbl tbody tr:hover { background: rgba(255,255,255,0.02); }
+  /* hide elements when not active */
+  .view { display: none; }
+  .view.active { display: block; }
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--ss-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--ss-line); border-radius: 5px; }
+</style>
+</head>
+
+<body class="min-h-screen">
+
+<!-- ================================================================
+     LOGIN VIEW
+     ================================================================ -->
+<div id="login-screen" class="min-h-screen flex items-center justify-center p-6">
+  <div class="ss-panel w-full max-w-md p-10">
+    <div class="flex flex-col items-center">
+      <!-- SVG Logo -->
+      <svg viewBox="0 0 64 64" class="w-16 h-16 mb-4" aria-hidden="true">
+        <defs>
+          <linearGradient id="ssLogoGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%"  stop-color="#7c5cff"/>
+            <stop offset="100%" stop-color="#22d3ee"/>
+          </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#ssLogoGrad)"/>
+        <!-- two interlocking arcs forming an "S" sync mark -->
+        <path d="M22 22 q10 -8 20 0 q-10 8 -20 0 z" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <path d="M22 42 q10 -8 20 0 q-10 8 -20 0 z" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="32" cy="32" r="3" fill="#fff"/>
+      </svg>
+      <h1 class="text-3xl font-bold ss-text-grad">SyncSpace</h1>
+      <p class="ss-muted text-sm mt-1">B2B Project Management · Provisioned access only</p>
+    </div>
+
+    <div class="mt-8">
+      <label for="persona-select">Select your provisioned persona</label>
+      <select id="persona-select" class="mb-4">
+        <!-- options injected at boot -->
+      </select>
+      <button id="login-btn" class="btn-primary w-full py-3 rounded-lg font-semibold">
+        🔐 Enter SyncSpace
+      </button>
+      <p class="text-xs ss-muted text-center mt-4">
+        Public signup is disabled. Contact your account Manager to provision a new user.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     APP SHELL  (sidebar + topbar + main view container)
+     ================================================================ -->
+<div id="app-shell" class="hidden min-h-screen flex">
+
+  <!-- SIDEBAR ------------------------------------------------------ -->
+  <aside class="w-64 ss-panel rounded-none border-r border-[var(--ss-line)] flex flex-col">
+    <div class="px-5 py-5 flex items-center gap-3 border-b border-[var(--ss-line)]">
+      <svg viewBox="0 0 64 64" class="w-8 h-8" aria-hidden="true">
+        <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#ssLogoGrad2)"/>
+        <defs><linearGradient id="ssLogoGrad2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7c5cff"/><stop offset="100%" stop-color="#22d3ee"/></linearGradient></defs>
+        <path d="M22 22 q10 -8 20 0 q-10 8 -20 0 z" fill="none" stroke="#fff" stroke-width="3"/>
+        <path d="M22 42 q10 -8 20 0 q-10 8 -20 0 z" fill="none" stroke="#fff" stroke-width="3"/>
+      </svg>
+      <div>
+        <div class="font-bold ss-text-grad">SyncSpace</div>
+        <div class="text-[10px] ss-muted">v1.0 prototype</div>
+      </div>
+    </div>
+    <nav id="sidebar-nav" class="flex-1 overflow-auto py-3"></nav>
+    <div class="border-t border-[var(--ss-line)] p-4 text-xs ss-muted">
+      <div>DB: <code class="text-[var(--ss-accent-2)]">syncspace_db</code></div>
+      <div>Mirroring seed data from PgAdmin script</div>
+    </div>
+  </aside>
+
+  <!-- MAIN COLUMN -------------------------------------------------- -->
+  <div class="flex-1 flex flex-col">
+
+    <!-- TOPBAR (role switcher + user info) ----------------------- -->
+    <header class="ss-panel rounded-none border-b border-[var(--ss-line)] flex items-center justify-between px-6 py-3">
+      <div>
+        <h2 id="view-title" class="text-lg font-semibold">—</h2>
+        <p id="view-subtitle" class="text-xs ss-muted">—</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <!-- ROLE SWITCHER -->
+        <div class="flex items-center gap-2 bg-[var(--ss-bg-2)] border border-[var(--ss-line)] rounded-lg p-1">
+          <span class="text-xs ss-muted px-2">View as:</span>
+          <button data-role="Manager"      class="role-btn px-3 py-1 rounded-md text-xs font-semibold">Manager</button>
+          <button data-role="Client"       class="role-btn px-3 py-1 rounded-md text-xs font-semibold">Client</button>
+          <button data-role="WorkingStaff" class="role-btn px-3 py-1 rounded-md text-xs font-semibold">Working&nbsp;Staff</button>
+        </div>
+        <div class="text-right">
+          <div id="current-user-name" class="text-sm font-semibold">—</div>
+          <div id="current-user-meta" class="text-xs ss-muted">—</div>
+        </div>
+        <button id="logout-btn" class="text-xs ss-muted hover:text-white border border-[var(--ss-line)] rounded-md px-3 py-1.5">Logout</button>
+      </div>
+    </header>
+
+    <!-- VIEW CONTAINER ---------------------------------------------- -->
+    <main id="view-container" class="flex-1 overflow-auto p-6"></main>
+  </div>
+</div>
+
+<!-- ================================================================
+     APPLICATION SCRIPT
+     ================================================================ -->
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------
+   1.  SEED DATA  --  mirrors db/02_schema_and_seed.sql verbatim
+   ------------------------------------------------------------------ */
+const SEED = Object.freeze({
+  companies: [
+    { id: 'co-1', legal_name: 'SyncSpace Studios LLC', industry: 'Software Services', contact_email: 'ops@syncspace.io',         is_internal: true  },
+    { id: 'co-2', legal_name: 'Helios Retail Group',   industry: 'Retail',            contact_email: 'finance@heliosretail.com', is_internal: false },
+    { id: 'co-3', legal_name: 'Atlas Medtech Inc.',    industry: 'Medical Devices',   contact_email: 'pmo@atlasmedtech.com',     is_internal: false }
+  ],
+  users: [
+    { id: 'u-mgr-1',   company_id: 'co-1', full_name: 'Maya Chen',         email: 'maya.chen@syncspace.io',     role: 'Manager'      },
+    { id: 'u-staff-1', company_id: 'co-1', full_name: 'Devon Carter',      email: 'devon.carter@syncspace.io',  role: 'WorkingStaff' },
+    { id: 'u-staff-2', company_id: 'co-1', full_name: 'Priya Iyer',        email: 'priya.iyer@syncspace.io',    role: 'WorkingStaff' },
+    { id: 'u-staff-3', company_id: 'co-1', full_name: 'Lukas Berg',        email: 'lukas.berg@syncspace.io',    role: 'WorkingStaff' },
+    { id: 'u-cli-1',   company_id: 'co-2', full_name: 'Eleanor Whitfield', email: 'e.whitfield@heliosretail.com', role: 'Client'     },
+    { id: 'u-cli-2',   company_id: 'co-2', full_name: 'Marcus Reid',       email: 'm.reid@heliosretail.com',    role: 'Client'      },
+    { id: 'u-cli-3',   company_id: 'co-3', full_name: 'Dr. Anika Rao',     email: 'a.rao@atlasmedtech.com',     role: 'Client'      }
+  ],
+  projects: [
+    { id:'p-1', code:'PRJ-2025-0001', title:'Helios E-Commerce Replatform',
+      client_company_id:'co-2', manager_id:'u-mgr-1', quotation_amount:185000.00, status:'InProgress',
+      planned_start:'2025-02-03', planned_end:'2025-06-30', actual_start:'2025-02-05', actual_end:null,
+      description:'Migrate Helios Retail flagship store to a headless commerce stack with new checkout flow.' },
+    { id:'p-2', code:'PRJ-2025-0002', title:'Helios Loyalty Mobile App',
+      client_company_id:'co-2', manager_id:'u-mgr-1', quotation_amount: 92000.00, status:'Approved',
+      planned_start:'2025-04-15', planned_end:'2025-09-15', actual_start:null, actual_end:null,
+      description:'Native iOS/Android loyalty programme with points engine and offer push.' },
+    { id:'p-3', code:'PRJ-2024-0099', title:'Atlas Surgical Console Firmware Audit',
+      client_company_id:'co-3', manager_id:'u-mgr-1', quotation_amount: 64500.00, status:'Completed',
+      planned_start:'2024-10-01', planned_end:'2024-12-20', actual_start:'2024-10-03', actual_end:'2024-12-18',
+      description:'Independent audit of firmware update pipeline for FDA submission readiness.' },
+    { id:'p-4', code:'PRJ-2025-0010', title:'Atlas Patient Portal Refresh',
+      client_company_id:'co-3', manager_id:'u-mgr-1', quotation_amount: 48000.00, status:'Proposed',
+      planned_start:'2025-07-01', planned_end:'2025-10-15', actual_start:null, actual_end:null,
+      description:'UX overhaul of the patient-facing portal with WCAG 2.2 AA compliance.' }
+  ],
+  tasks: [
+    { id:'t-1', project_id:'p-1', title:'Headless commerce architecture spike', assigned_to:'u-staff-1', status:'Approved',  priority:1, expected_start:'2025-02-05', expected_due:'2025-02-21', actual_start:'2025-02-05', actual_completed_at:'2025-02-19' },
+    { id:'t-2', project_id:'p-1', title:'Checkout flow redesign',               assigned_to:'u-staff-2', status:'InProgress',priority:2, expected_start:'2025-02-22', expected_due:'2025-04-04', actual_start:'2025-02-24', actual_completed_at:null },
+    { id:'t-3', project_id:'p-1', title:'Payment gateway integration',          assigned_to:'u-staff-3', status:'Pending',   priority:2, expected_start:'2025-04-07', expected_due:'2025-05-23', actual_start:null,         actual_completed_at:null },
+    { id:'t-4', project_id:'p-1', title:'Performance & load testing',           assigned_to:'u-staff-1', status:'Pending',   priority:3, expected_start:'2025-05-26', expected_due:'2025-06-20', actual_start:null,         actual_completed_at:null },
+    { id:'t-5', project_id:'p-2', title:'Points engine API design',             assigned_to:'u-staff-2', status:'Pending',   priority:2, expected_start:'2025-04-15', expected_due:'2025-05-09', actual_start:null,         actual_completed_at:null },
+    { id:'t-6', project_id:'p-2', title:'iOS app skeleton',                     assigned_to:'u-staff-3', status:'Pending',   priority:2, expected_start:'2025-05-12', expected_due:'2025-06-27', actual_start:null,         actual_completed_at:null },
+    { id:'t-7', project_id:'p-3', title:'Threat-model walk-through',            assigned_to:'u-staff-1', status:'Approved',  priority:1, expected_start:'2024-10-03', expected_due:'2024-10-25', actual_start:'2024-10-03', actual_completed_at:'2024-10-22' },
+    { id:'t-8', project_id:'p-3', title:'Static analysis & SBOM',               assigned_to:'u-staff-2', status:'Approved',  priority:2, expected_start:'2024-10-28', expected_due:'2024-11-29', actual_start:'2024-10-29', actual_completed_at:'2024-11-27' },
+    { id:'t-9', project_id:'p-3', title:'Audit report & FDA appendix',          assigned_to:'u-staff-3', status:'Approved',  priority:1, expected_start:'2024-12-02', expected_due:'2024-12-19', actual_start:'2024-12-02', actual_completed_at:'2024-12-17' }
+  ],
+  subtasks: [
+    { id:'s-1',  task_id:'t-1', title:'Compile vendor evaluation matrix', is_done:true,  done_at:'2025-02-10' },
+    { id:'s-2',  task_id:'t-1', title:'Spike Hydrogen prototype',          is_done:true,  done_at:'2025-02-15' },
+    { id:'s-3',  task_id:'t-1', title:'Architecture decision record',      is_done:true,  done_at:'2025-02-19' },
+    { id:'s-4',  task_id:'t-2', title:'Wireframe v1 (mobile)',             is_done:true,  done_at:'2025-03-05' },
+    { id:'s-5',  task_id:'t-2', title:'Wireframe v1 (desktop)',            is_done:true,  done_at:'2025-03-10' },
+    { id:'s-6',  task_id:'t-2', title:'Clickable prototype A/B',           is_done:false, done_at:null        },
+    { id:'s-7',  task_id:'t-2', title:'Usability test rounds (2)',         is_done:false, done_at:null        },
+    { id:'s-8',  task_id:'t-3', title:'Stripe sandbox integration',        is_done:false, done_at:null        },
+    { id:'s-9',  task_id:'t-3', title:'Adyen failover wiring',             is_done:false, done_at:null        },
+    { id:'s-10', task_id:'t-3', title:'PCI scope assessment',              is_done:false, done_at:null        },
+    { id:'s-11', task_id:'t-7', title:'STRIDE workshop',                   is_done:true,  done_at:'2024-10-10' },
+    { id:'s-12', task_id:'t-7', title:'Threat register',                   is_done:true,  done_at:'2024-10-22' },
+    { id:'s-13', task_id:'t-8', title:'Coverity baseline scan',            is_done:true,  done_at:'2024-11-12' },
+    { id:'s-14', task_id:'t-8', title:'Generate CycloneDX SBOM',           is_done:true,  done_at:'2024-11-27' }
+  ],
+  invoices: [
+    { id:'i-1', invoice_number:'INV-2025-001', project_id:'p-1', amount_issued: 55500.00, status:'Paid',    issue_date:'2025-02-15', due_date:'2025-03-17', paid_at:'2025-03-12', notes:'Milestone 1: discovery & architecture (30%).' },
+    { id:'i-2', invoice_number:'INV-2025-007', project_id:'p-1', amount_issued: 37000.00, status:'Issued',  issue_date:'2025-04-05', due_date:'2025-05-05', paid_at:null,         notes:'Milestone 2: design sign-off (20%).' },
+    { id:'i-3', invoice_number:'INV-2024-211', project_id:'p-3', amount_issued: 32250.00, status:'Paid',    issue_date:'2024-10-20', due_date:'2024-11-19', paid_at:'2024-11-04', notes:'Audit phase A — 50%.' },
+    { id:'i-4', invoice_number:'INV-2024-258', project_id:'p-3', amount_issued: 32250.00, status:'Paid',    issue_date:'2024-12-19', due_date:'2025-01-18', paid_at:'2025-01-08', notes:'Audit phase B + final report.' },
+    { id:'i-5', invoice_number:'INV-2025-014', project_id:'p-2', amount_issued: 18400.00, status:'Overdue', issue_date:'2025-04-20', due_date:'2025-05-20', paid_at:null,         notes:'Kickoff retainer (20%).' }
+  ],
+  work_submissions: [
+    { id:'w-1', task_id:'t-1', submitted_by:'u-staff-1', summary:'Hydrogen vs. commercetools spike complete; ADR attached.', delivery_url:'https://syncspace.example/deliverables/PRJ-2025-0001/adr-001.pdf', submitted_at:'2025-02-19', review_status:'Approved', review_notes:'Strong analysis — proceed with Hydrogen.' },
+    { id:'w-2', task_id:'t-7', submitted_by:'u-staff-1', summary:'STRIDE threat model and register delivered.',              delivery_url:'https://syncspace.example/deliverables/PRJ-2024-0099/stride-report.pdf', submitted_at:'2024-10-22', review_status:'Approved', review_notes:'Accepted; appendix A will be referenced in FDA submission.' }
+  ]
+});
+
+/* ------------------------------------------------------------------
+   2.  APPLICATION STATE  (single source of truth)
+   ------------------------------------------------------------------ */
+const appState = {
+  isAuthenticated: false,
+  currentUserId:   null,
+  activeView:      'login'
+};
+
+/* ------------------------------------------------------------------
+   3.  UTILITIES
+   ------------------------------------------------------------------ */
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function fmtCurrency(amount, currency) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '—';
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 0 }).format(n);
+  } catch (err) {
+    return '$' + n.toLocaleString();
+  }
+}
+
+function fmtDate(isoDate) {
+  if (!isoDate) return '—';
+  // Already validated YYYY-MM-DD; render in locale-aware short form
+  try {
+    const d = new Date(isoDate + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return escapeHtml(isoDate);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit', timeZone: 'UTC' });
+  } catch (err) {
+    return escapeHtml(isoDate);
+  }
+}
+
+function daysBetween(aIso, bIso) {
+  if (!aIso || !bIso) return null;
+  const a = new Date(aIso + 'T00:00:00Z');
+  const b = new Date(bIso + 'T00:00:00Z');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+function findById(arr, id) {
+  if (!Array.isArray(arr) || !id) return null;
+  return arr.find(x => x && x.id === id) || null;
+}
+
+function safeRender(targetEl, html) {
+  if (!targetEl) return;
+  targetEl.innerHTML = html;
+}
+
+function statusPill(status) {
+  const map = {
+    Pending: 'pill-neutral', InProgress: 'pill-info', Blocked: 'pill-bad',
+    Submitted: 'pill-warn',  Approved: 'pill-good',   Rejected: 'pill-bad',
+    Proposed: 'pill-neutral', OnHold: 'pill-warn', Completed: 'pill-good', Cancelled: 'pill-bad',
+    Draft: 'pill-neutral', Issued: 'pill-info', Paid: 'pill-good', Overdue: 'pill-bad', Void: 'pill-bad'
+  };
+  const cls = map[status] || 'pill-neutral';
+  return '<span class="pill ' + cls + '">' + escapeHtml(status) + '</span>';
+}
+
+/* ------------------------------------------------------------------
+   4.  DERIVED COMPUTATIONS
+   ------------------------------------------------------------------ */
+function projectProgress(projectId) {
+  // % = (sum of done subtasks across project's tasks) / (total subtasks)
+  const taskIds  = SEED.tasks.filter(t => t.project_id === projectId).map(t => t.id);
+  if (taskIds.length === 0) return { pct: 0, done: 0, total: 0 };
+  const subs = SEED.subtasks.filter(s => taskIds.includes(s.task_id));
+  if (subs.length === 0) return { pct: 0, done: 0, total: 0 };
+  const done = subs.filter(s => s.is_done).length;
+  return { pct: Math.round((done / subs.length) * 100), done, total: subs.length };
+}
+
+function projectInvoicedTotal(projectId) {
+  return SEED.invoices
+    .filter(i => i.project_id === projectId && i.status !== 'Void' && i.status !== 'Draft')
+    .reduce((acc, i) => acc + Number(i.amount_issued), 0);
+}
+
+function projectVarianceDays(projectId) {
+  // Returns number of days between actual_end and planned_end. Null if not finished.
+  const p = findById(SEED.projects, projectId);
+  if (!p || !p.actual_end) return null;
+  return daysBetween(p.planned_end, p.actual_end); // positive = late
+}
+
+function staffVelocity(userId) {
+  // simple proxy: total subtasks completed by tasks assigned to this user
+  const myTasks = SEED.tasks.filter(t => t.assigned_to === userId);
+  const myTaskIds = myTasks.map(t => t.id);
+  const myDone = SEED.subtasks.filter(s => myTaskIds.includes(s.task_id) && s.is_done).length;
+  const myTotal = SEED.subtasks.filter(s => myTaskIds.includes(s.task_id)).length;
+  return { done: myDone, total: myTotal, tasks: myTasks.length };
+}
+
+/* ------------------------------------------------------------------
+   5.  ROLE-BASED MENU CONFIG
+   ------------------------------------------------------------------ */
+const MENU = {
+  Manager: [
+    { group: 'Overview' },
+      { id: 'mgr-dash',     label: 'Project Analytics',   icon: '📊' },
+      { id: 'mgr-fin',      label: 'Financial Ledger',    icon: '💰' },
+      { id: 'mgr-perf',     label: 'Staff Performance',   icon: '🚀' },
+    { group: 'Inputs' },
+      { id: 'mgr-prov',     label: 'Provisioning',        icon: '👥' },
+      { id: 'mgr-proj',     label: 'New Project',         icon: '📁' },
+      { id: 'mgr-task',     label: 'Task Delegator',      icon: '✅' },
+    { group: 'MIS Reports' },
+      { id: 'rpt-variance', label: 'Schedule Variance',   icon: '📅' },
+      { id: 'rpt-yield',    label: 'Financial Yield',     icon: '📈' },
+    { group: 'Architecture' },
+      { id: 'erd',          label: 'Database ERD',        icon: '🗂️' },
+      { id: 'dfd',          label: 'Workflow DFD',        icon: '🔀' }
+  ],
+  Client: [
+    { group: 'Overview' },
+      { id: 'cli-track',    label: 'Project Tracker',     icon: '📊' },
+      { id: 'cli-inv',      label: 'Invoices & Billing',  icon: '🧾' },
+    { group: 'Inputs' },
+      { id: 'cli-prop',     label: 'New Project Proposal',icon: '✉️' },
+    { group: 'Architecture' },
+      { id: 'erd',          label: 'Database ERD',        icon: '🗂️' },
+      { id: 'dfd',          label: 'Workflow DFD',        icon: '🔀' }
+  ],
+  WorkingStaff: [
+    { group: 'Workspace' },
+      { id: 'staff-kanban', label: 'My Kanban Board',     icon: '🗒️' },
+    { group: 'Inputs' },
+      { id: 'staff-exec',   label: 'Task Execution',      icon: '⚙️' },
+      { id: 'staff-submit', label: 'Submit Work',         icon: '📤' },
+    { group: 'Architecture' },
+      { id: 'erd',          label: 'Database ERD',        icon: '🗂️' },
+      { id: 'dfd',          label: 'Workflow DFD',        icon: '🔀' }
+  ]
+};
+
+const VIEW_TITLES = {
+  'mgr-dash':     ['Project Analytics',    'Completion rates, schedule variance, fleet-wide health'],
+  'mgr-fin':      ['Financial Ledger',     'Quotations vs. issued invoices'],
+  'mgr-perf':     ['Staff Performance',    'Task velocity & throughput per WorkingStaff member'],
+  'mgr-prov':     ['Provisioning',         'Create new client companies and provision users'],
+  'mgr-proj':     ['New Project',          'Define quotation, scope, and planned timeline'],
+  'mgr-task':     ['Task Delegator',       'Decompose project into tasks and subtasks'],
+  'rpt-variance': ['Schedule Variance Report','MIS — planned vs. actual completion deltas'],
+  'rpt-yield':    ['Financial Yield Report',  'MIS — proposed quotations vs. realized revenue per client'],
+  'cli-track':    ['Project Oversight',    'Live progress across your engagements'],
+  'cli-inv':      ['Invoices & Billing',   'Statement of issued invoices'],
+  'cli-prop':     ['New Project Proposal', 'Submit a project concept to your account Manager'],
+  'staff-kanban': ['My Workspace',         'Personalised To-Do / Doing / Done board'],
+  'staff-exec':   ['Task Execution',       'Work through subtasks and log completion dates'],
+  'staff-submit': ['Submit Work',          'Hand deliverables off for Client review'],
+  'erd':          ['Database ERD',         'Schema mirror of db/02_schema_and_seed.sql'],
+  'dfd':          ['Workflow DFD',         'Level-1 data-flow diagram of the SyncSpace process']
+};
+
+/* ------------------------------------------------------------------
+   6.  AUTHENTICATION & ROLE SWITCHING
+   ------------------------------------------------------------------ */
+function getCurrentUser() {
+  return findById(SEED.users, appState.currentUserId);
+}
+
+function getCurrentRole() {
+  const u = getCurrentUser();
+  return u ? u.role : null;
+}
+
+function login(userId) {
+  const user = findById(SEED.users, userId);
+  if (!user) {
+    alert('Selected persona could not be found.');
+    return;
+  }
+  appState.isAuthenticated = true;
+  appState.currentUserId   = user.id;
+  appState.activeView      = defaultViewForRole(user.role);
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-shell').classList.remove('hidden');
+  renderShell();
+}
+
+function logout() {
+  appState.isAuthenticated = false;
+  appState.currentUserId   = null;
+  appState.activeView      = 'login';
+  document.getElementById('app-shell').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+}
+
+function defaultViewForRole(role) {
+  if (role === 'Manager')      return 'mgr-dash';
+  if (role === 'Client')       return 'cli-track';
+  if (role === 'WorkingStaff') return 'staff-kanban';
+  return 'erd';
+}
+
+function switchRole(targetRole) {
+  // Switch to ANY user that has the requested role (first match) so the
+  // role-switcher is a true demo control.
+  const next = SEED.users.find(u => u.role === targetRole);
+  if (!next) {
+    alert('No provisioned user found with role: ' + targetRole);
+    return;
+  }
+  appState.currentUserId = next.id;
+  appState.activeView    = defaultViewForRole(targetRole);
+  renderShell();
+}
+
+/* ------------------------------------------------------------------
+   7.  SHELL RENDERING (sidebar, topbar, then dispatch to view)
+   ------------------------------------------------------------------ */
+function renderShell() {
+  const user = getCurrentUser();
+  if (!user) { logout(); return; }
+
+  /* topbar */
+  document.getElementById('current-user-name').textContent = user.full_name;
+  const company = findById(SEED.companies, user.company_id);
+  document.getElementById('current-user-meta').textContent =
+    user.role + ' · ' + (company ? company.legal_name : 'Unknown company');
+
+  /* role buttons */
+  document.querySelectorAll('.role-btn').forEach(btn => {
+    const isActive = btn.dataset.role === user.role;
+    btn.classList.toggle('btn-primary', isActive);
+    btn.classList.toggle('text-[var(--ss-muted)]', !isActive);
+  });
+
+  /* sidebar */
+  const items = MENU[user.role] || [];
+  const sidebarHtml = items.map(item => {
+    if (item.group) {
+      return '<div class="px-5 pt-4 pb-1 text-[10px] uppercase tracking-wider ss-muted font-semibold">' + escapeHtml(item.group) + '</div>';
+    }
+    const isActive = appState.activeView === item.id;
+    return '<button data-nav="' + escapeHtml(item.id) + '" class="nav-item ' + (isActive ? 'active' : '') + ' w-full text-left px-5 py-2.5 text-sm flex items-center gap-3">' +
+           '<span>' + escapeHtml(item.icon) + '</span>' +
+           '<span>' + escapeHtml(item.label) + '</span>' +
+           '</button>';
+  }).join('');
+  document.getElementById('sidebar-nav').innerHTML = sidebarHtml;
+
+  /* title block */
+  const title = VIEW_TITLES[appState.activeView] || ['SyncSpace', ''];
+  document.getElementById('view-title').textContent    = title[0];
+  document.getElementById('view-subtitle').textContent = title[1];
+
+  /* dispatch to per-view renderer */
+  renderActiveView();
+}
+
+function renderActiveView() {
+  const root = document.getElementById('view-container');
+  const view = appState.activeView;
+
+  // --- guard: if the requested view is not in the user's menu, fall back ---
+  const allowed = (MENU[getCurrentRole()] || []).some(it => it.id === view);
+  if (!allowed) {
+    appState.activeView = defaultViewForRole(getCurrentRole());
+    renderShell();
+    return;
+  }
+
+  switch (view) {
+    case 'mgr-dash':     return safeRender(root, renderManagerDashboard());
+    case 'mgr-fin':      return safeRender(root, renderFinancialLedger());
+    case 'mgr-perf':     return safeRender(root, renderPerformanceGrid());
+    case 'mgr-prov':     return safeRender(root, renderProvisioningForm());
+    case 'mgr-proj':     return safeRender(root, renderProjectForm());
+    case 'mgr-task':     return safeRender(root, renderTaskDelegator());
+    case 'rpt-variance': return safeRender(root, renderVarianceReport());
+    case 'rpt-yield':    return safeRender(root, renderYieldReport());
+    case 'cli-track':    return safeRender(root, renderClientTracker());
+    case 'cli-inv':      return safeRender(root, renderClientInvoices());
+    case 'cli-prop':     return safeRender(root, renderProposalForm());
+    case 'staff-kanban': return safeRender(root, renderStaffKanban());
+    case 'staff-exec':   return safeRender(root, renderExecutionCard());
+    case 'staff-submit': return safeRender(root, renderSubmissionForm());
+    case 'erd':          return safeRender(root, renderERD());
+    case 'dfd': {
+      safeRender(root, renderDFD());
+      // Mermaid renders after the DOM node exists. Wrapped in try/catch:
+      try {
+        if (window.mermaid && typeof window.mermaid.run === 'function') {
+          window.mermaid.run({ querySelector: '.mermaid' });
+        }
+      } catch (err) {
+        console.warn('Mermaid render skipped: ' + err.message);
+      }
+      return;
+    }
+    default:             return safeRender(root, '<div class="ss-muted">Unknown view.</div>');
+  }
+}
+
+/* ==================================================================
+   8.   VIEW RENDERERS
+   ================================================================== */
+
+/* ----- ARCHITECTURE: ERD (HTML/CSS visualisation) ----------------- */
+function renderERD() {
+  const tables = [
+    { name:'companies',        color:'#7c5cff', cols:[
+      ['company_id','PK uuid'], ['legal_name','varchar(150)'], ['industry','varchar(80)'],
+      ['contact_email','varchar(150)'], ['is_internal','bool']
+    ]},
+    { name:'users',            color:'#22d3ee', cols:[
+      ['user_id','PK uuid'], ['company_id','FK → companies'], ['full_name','varchar(120)'],
+      ['email','UK varchar(150)'], ['role','user_role ENUM']
+    ]},
+    { name:'projects',         color:'#34d399', cols:[
+      ['project_id','PK uuid'], ['project_code','UK varchar(20)'], ['client_company_id','FK → companies'],
+      ['manager_id','FK → users'], ['quotation_amount','numeric(14,2)'], ['status','project_status'],
+      ['planned_start_date','date'], ['planned_end_date','date'],
+      ['actual_start_date','date'], ['actual_end_date','date']
+    ]},
+    { name:'tasks',            color:'#fbbf24', cols:[
+      ['task_id','PK uuid'], ['project_id','FK → projects'], ['assigned_to','FK → users'],
+      ['title','varchar(180)'], ['status','task_status'],
+      ['expected_start_date','date'], ['expected_due_date','date'],
+      ['actual_start_date','date'], ['actual_completed_at','date']
+    ]},
+    { name:'subtasks',         color:'#f472b6', cols:[
+      ['subtask_id','PK uuid'], ['task_id','FK → tasks'],
+      ['title','varchar(180)'], ['is_done','bool'], ['done_by','FK → users'], ['done_at','date']
+    ]},
+    { name:'invoices',         color:'#fb923c', cols:[
+      ['invoice_id','PK uuid'], ['invoice_number','UK varchar(30)'], ['project_id','FK → projects'],
+      ['issued_by','FK → users'], ['amount_issued','numeric(14,2)'],
+      ['status','invoice_status'], ['issue_date','date'], ['due_date','date'], ['paid_at','date']
+    ]},
+    { name:'work_submissions', color:'#a78bfa', cols:[
+      ['submission_id','PK uuid'], ['task_id','FK → tasks'], ['submitted_by','FK → users'],
+      ['delivery_url','varchar(500)'], ['review_status','task_status'], ['reviewed_by','FK → users']
+    ]}
+  ];
+
+  function tableCard(t) {
+    const lis = t.cols.map(c => {
+      const meta = c[1] || '';
+      const cls  = meta.startsWith('PK') ? 'pk' : (meta.startsWith('FK') || meta.startsWith('UK')) ? 'fk' : '';
+      return '<li class="' + cls + '">' +
+             '<span class="font-mono">' + escapeHtml(c[0]) + '</span>' +
+             '<span class="ss-muted text-[10px] block">' + escapeHtml(meta) + '</span>' +
+             '</li>';
+    }).join('');
+    return '<div class="erd-table">' +
+           '<h4 style="background:' + t.color + '">' + escapeHtml(t.name) + '</h4>' +
+           '<ul>' + lis + '</ul>' +
+           '</div>';
+  }
+
+  const rels = [
+    ['companies','users','1 : N (employs)'],
+    ['companies','projects','1 : N (owns as client)'],
+    ['users','projects','1 : N (manages)'],
+    ['projects','tasks','1 : N'],
+    ['tasks','subtasks','1 : N'],
+    ['users','tasks','1 : N (assigned_to)'],
+    ['projects','invoices','1 : N'],
+    ['tasks','work_submissions','1 : N']
+  ];
+
+  return [
+    '<div class="ss-panel p-6">',
+    '  <div class="flex items-center justify-between mb-4">',
+    '    <div>',
+    '      <h3 class="text-xl font-semibold">Entity-Relationship Diagram</h3>',
+    '      <p class="ss-muted text-sm">Mirrors the schema in <code>db/02_schema_and_seed.sql</code>. Yellow = primary key, cyan = foreign / unique key.</p>',
+    '    </div>',
+    '    <div class="flex gap-2 text-xs">',
+    '      <span class="pill pill-warn">PK</span>',
+    '      <span class="pill pill-info">FK / UK</span>',
+    '    </div>',
+    '  </div>',
+    '  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">',
+         tables.map(tableCard).join(''),
+    '  </div>',
+    '  <div class="mt-8">',
+    '    <h4 class="text-sm font-semibold mb-3 ss-muted uppercase tracking-wider">Relationships</h4>',
+    '    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">',
+         rels.map(r =>
+           '<div class="ss-card p-3"><span class="font-mono text-[var(--ss-accent-2)]">' +
+             escapeHtml(r[0]) + ' → ' + escapeHtml(r[1]) + '</span><div class="ss-muted text-xs mt-1">' +
+             escapeHtml(r[2]) + '</div></div>'
+         ).join(''),
+    '    </div>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- ARCHITECTURE: DFD Level 1 via Mermaid --------------------- */
+function renderDFD() {
+  const diagram = [
+    'flowchart LR',
+    '  Client[("👤 Client<br/>(External Entity)")]',
+    '  Manager[("🧑‍💼 Manager<br/>(External Entity)")]',
+    '  Staff[("👷 WorkingStaff<br/>(External Entity)")]',
+    '  P1["1.0<br/>Project Proposal<br/>Intake"]',
+    '  P2["2.0<br/>Project &amp; Task<br/>Architecture"]',
+    '  P3["3.0<br/>Task Execution"]',
+    '  P4["4.0<br/>Review &amp; Sign-off"]',
+    '  P5["5.0<br/>Invoice Issuance"]',
+    '  D1[("D1: projects")]',
+    '  D2[("D2: tasks / subtasks")]',
+    '  D3[("D3: work_submissions")]',
+    '  D4[("D4: invoices")]',
+    '  Client -- proposal request --> P1',
+    '  P1 -- new draft project --> D1',
+    '  Manager -- approve &amp; staff --> P2',
+    '  P2 -- project + tasks --> D1',
+    '  P2 -- tasks/subtasks --> D2',
+    '  P2 -- assignments --> Staff',
+    '  Staff -- progress + submissions --> P3',
+    '  P3 -- subtask updates --> D2',
+    '  P3 -- deliverables --> D3',
+    '  D3 -- pending review --> P4',
+    '  Client -- review verdict --> P4',
+    '  P4 -- approval --> D2',
+    '  P4 -- billable milestone --> P5',
+    '  Manager -- issue invoice --> P5',
+    '  P5 -- invoice --> D4',
+    '  D4 -- statement --> Client'
+  ].join('\n');
+
+  return [
+    '<div class="ss-panel p-6">',
+    '  <div class="mb-4">',
+    '    <h3 class="text-xl font-semibold">Level-1 Data Flow Diagram</h3>',
+    '    <p class="ss-muted text-sm">Five major processes connect the three external entities to four data stores (D1–D4).</p>',
+    '  </div>',
+    '  <div class="bg-white rounded-lg p-6 overflow-auto">',
+    '    <pre class="mermaid">' + diagram + '</pre>',
+    '  </div>',
+    '  <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">',
+    '    <div class="ss-card p-3"><b>External entities:</b> Client, Manager, WorkingStaff</div>',
+    '    <div class="ss-card p-3"><b>Processes 1.0–5.0:</b> Proposal · Architecture · Execution · Review · Invoicing</div>',
+    '    <div class="ss-card p-3"><b>Data stores:</b> projects · tasks/subtasks · work_submissions · invoices</div>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MANAGER INPUT 1: Provisioning ----------------------------- */
+function renderProvisioningForm() {
+  const companyOpts = SEED.companies.map(c =>
+    '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.legal_name) + '</option>').join('');
+
+  const existingRows = SEED.users.map(u => {
+    const co = findById(SEED.companies, u.company_id);
+    return '<tr>' +
+      '<td>' + escapeHtml(u.full_name) + '</td>' +
+      '<td class="ss-muted">' + escapeHtml(u.email) + '</td>' +
+      '<td>' + statusPill(u.role) + '</td>' +
+      '<td class="ss-muted">' + escapeHtml(co ? co.legal_name : '—') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return [
+    '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">',
+    '  <div class="ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-1">Provision a Company</h3>',
+    '    <p class="ss-muted text-sm mb-5">Creates a row in <code>companies</code>.</p>',
+    '    <div class="grid grid-cols-1 gap-4">',
+    '      <div><label>Legal name</label><input type="text" placeholder="e.g. Northwind Logistics Ltd."></div>',
+    '      <div><label>Industry</label><input type="text" placeholder="e.g. Logistics"></div>',
+    '      <div class="grid grid-cols-2 gap-3">',
+    '        <div><label>Contact email</label><input type="email" placeholder="ops@…"></div>',
+    '        <div><label>Phone</label><input type="text" placeholder="+1-…"></div>',
+    '      </div>',
+    '      <div><label>Billing address</label><textarea rows="2"></textarea></div>',
+    '      <button class="btn-primary py-2.5 rounded-lg font-semibold mt-2">+ Create Company</button>',
+    '    </div>',
+    '  </div>',
+    '  <div class="ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-1">Provision a User</h3>',
+    '    <p class="ss-muted text-sm mb-5">Creates a row in <code>users</code>. Roles enforced by the <code>user_role</code> ENUM.</p>',
+    '    <div class="grid grid-cols-1 gap-4">',
+    '      <div><label>Full name</label><input type="text" placeholder="Full legal name"></div>',
+    '      <div><label>Email (login)</label><input type="email" placeholder="user@company.com"></div>',
+    '      <div class="grid grid-cols-2 gap-3">',
+    '        <div><label>Role</label>',
+    '          <select><option>Manager</option><option>Client</option><option>WorkingStaff</option></select>',
+    '        </div>',
+    '        <div><label>Company</label><select>' + companyOpts + '</select></div>',
+    '      </div>',
+    '      <div><label>Temporary password</label><input type="password" placeholder="user is forced to rotate at first login"></div>',
+    '      <button class="btn-primary py-2.5 rounded-lg font-semibold mt-2">+ Provision User</button>',
+    '    </div>',
+    '  </div>',
+    '</div>',
+    '<div class="ss-panel p-6 mt-6">',
+    '  <h3 class="text-lg font-semibold mb-3">Currently provisioned users</h3>',
+    '  <table class="ss-tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Company</th></tr></thead><tbody>' + existingRows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MANAGER INPUT 2: Project Architecture --------------------- */
+function renderProjectForm() {
+  const clientCompanies = SEED.companies.filter(c => !c.is_internal)
+    .map(c => '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.legal_name) + '</option>').join('');
+  const managers = SEED.users.filter(u => u.role === 'Manager')
+    .map(u => '<option value="' + escapeHtml(u.id) + '">' + escapeHtml(u.full_name) + '</option>').join('');
+
+  return [
+    '<div class="ss-panel p-6">',
+    '  <h3 class="text-lg font-semibold mb-1">Define a New Project</h3>',
+    '  <p class="ss-muted text-sm mb-5">Persists into <code>projects</code> with quotation, currency, status and planned dates.</p>',
+    '  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">',
+    '    <div><label>Project code</label><input type="text" placeholder="PRJ-2025-XXXX"></div>',
+    '    <div><label>Title</label><input type="text" placeholder="Short, distinctive title"></div>',
+    '    <div class="md:col-span-2"><label>Description</label><textarea rows="3" placeholder="Scope, success criteria, key stakeholders…"></textarea></div>',
+    '    <div><label>Client company</label><select>' + clientCompanies + '</select></div>',
+    '    <div><label>Internal manager</label><select>' + managers + '</select></div>',
+    '    <div><label>Quotation value</label><input type="number" min="0" step="100" placeholder="0.00"></div>',
+    '    <div><label>Currency</label><select><option>USD</option><option>EUR</option><option>GBP</option><option>INR</option></select></div>',
+    '    <div><label>Planned start date</label><input type="date"></div>',
+    '    <div><label>Planned end date</label><input type="date"></div>',
+    '    <div class="md:col-span-2"><label>Initial status</label>',
+    '      <select><option>Proposed</option><option>Approved</option><option>InProgress</option><option>OnHold</option></select>',
+    '    </div>',
+    '  </div>',
+    '  <div class="flex justify-end gap-3 mt-6">',
+    '    <button class="px-4 py-2 rounded-lg border border-[var(--ss-line)]">Save draft</button>',
+    '    <button class="btn-primary px-5 py-2 rounded-lg font-semibold">📁 Create Project</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MANAGER INPUT 3: Task Delegator --------------------------- */
+function renderTaskDelegator() {
+  const projectOpts = SEED.projects.map(p =>
+    '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.code + ' — ' + p.title) + '</option>').join('');
+  const staffOpts = SEED.users.filter(u => u.role === 'WorkingStaff')
+    .map(u => '<option value="' + escapeHtml(u.id) + '">' + escapeHtml(u.full_name) + '</option>').join('');
+
+  // show one example task already on Project 1, with subtasks
+  const proj = SEED.projects[0];
+  const tasksOnProj = SEED.tasks.filter(t => t.project_id === proj.id);
+  const taskRows = tasksOnProj.map(t => {
+    const subs   = SEED.subtasks.filter(s => s.task_id === t.id);
+    const doneSubs = subs.filter(s => s.is_done).length;
+    const assignee = findById(SEED.users, t.assigned_to);
+    return '<div class="ss-card p-4 mb-3">' +
+      '<div class="flex items-start justify-between gap-3">' +
+        '<div>' +
+          '<div class="font-semibold">' + escapeHtml(t.title) + '</div>' +
+          '<div class="ss-muted text-xs mt-1">' +
+            'Assignee: <span class="text-[var(--ss-accent-2)]">' + escapeHtml(assignee ? assignee.full_name : '—') + '</span>' +
+            ' · Due ' + escapeHtml(fmtDate(t.expected_due)) +
+            ' · Subtasks ' + doneSubs + '/' + subs.length +
+          '</div>' +
+        '</div>' +
+        statusPill(t.status) +
+      '</div>' +
+      (subs.length ? '<ul class="mt-3 space-y-1 text-sm">' +
+        subs.map(s => '<li class="flex items-center gap-2"><input type="checkbox" ' + (s.is_done ? 'checked' : '') + ' disabled class="w-auto"> <span class="' + (s.is_done ? 'line-through ss-muted' : '') + '">' + escapeHtml(s.title) + '</span></li>').join('') +
+      '</ul>' : '') +
+    '</div>';
+  }).join('');
+
+  return [
+    '<div class="grid grid-cols-1 lg:grid-cols-5 gap-6">',
+    '  <div class="lg:col-span-2 ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-1">Create a Task</h3>',
+    '    <p class="ss-muted text-sm mb-4">Persists into <code>tasks</code>; subtasks form the executable checklist.</p>',
+    '    <div class="grid grid-cols-1 gap-4">',
+    '      <div><label>Project</label><select>' + projectOpts + '</select></div>',
+    '      <div><label>Task title</label><input type="text" placeholder="e.g. Migrate authentication"></div>',
+    '      <div><label>Description</label><textarea rows="2"></textarea></div>',
+    '      <div class="grid grid-cols-2 gap-3">',
+    '        <div><label>Assigned to</label><select>' + staffOpts + '</select></div>',
+    '        <div><label>Priority</label><select><option>1 — Critical</option><option>2 — High</option><option selected>3 — Normal</option><option>4 — Low</option><option>5 — Trivial</option></select></div>',
+    '      </div>',
+    '      <div class="grid grid-cols-2 gap-3">',
+    '        <div><label>Expected start</label><input type="date"></div>',
+    '        <div><label>Expected due</label><input type="date"></div>',
+    '      </div>',
+    '      <div><label>Subtasks (one per line)</label><textarea rows="4" placeholder="Subtask 1&#10;Subtask 2&#10;Subtask 3"></textarea></div>',
+    '      <button class="btn-primary py-2.5 rounded-lg font-semibold">+ Save Task &amp; Subtasks</button>',
+    '    </div>',
+    '  </div>',
+    '  <div class="lg:col-span-3 ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-1">Existing tasks · ' + escapeHtml(proj.code) + '</h3>',
+    '    <p class="ss-muted text-sm mb-4">' + escapeHtml(proj.title) + '</p>',
+         taskRows,
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- CLIENT INPUT: Project Proposal ---------------------------- */
+function renderProposalForm() {
+  const me = getCurrentUser();
+  const myCo = me ? findById(SEED.companies, me.company_id) : null;
+  return [
+    '<div class="ss-panel p-6 max-w-3xl">',
+    '  <h3 class="text-lg font-semibold mb-1">Submit a Project Proposal</h3>',
+    '  <p class="ss-muted text-sm mb-5">Your account Manager will review and convert this into an Approved project. Persists as <code>projects.status = \'Proposed\'</code>.</p>',
+    '  <div class="grid grid-cols-1 gap-4">',
+    '    <div><label>Submitted by</label><input type="text" value="' + escapeHtml(me ? me.full_name : '') + ' · ' + escapeHtml(myCo ? myCo.legal_name : '') + '" readonly></div>',
+    '    <div><label>Project concept (working title)</label><input type="text" placeholder="e.g. Annual loyalty programme refresh"></div>',
+    '    <div><label>Business problem &amp; goals</label><textarea rows="4" placeholder="What outcomes must this project achieve? Constraints?"></textarea></div>',
+    '    <div class="grid grid-cols-2 gap-3">',
+    '      <div><label>Desired start date</label><input type="date"></div>',
+    '      <div><label>Desired completion date</label><input type="date"></div>',
+    '    </div>',
+    '    <div class="grid grid-cols-2 gap-3">',
+    '      <div><label>Budget request</label><input type="number" min="0" step="500" placeholder="0.00"></div>',
+    '      <div><label>Currency</label><select><option>USD</option><option>EUR</option><option>GBP</option></select></div>',
+    '    </div>',
+    '    <div><label>Reference materials / links</label><textarea rows="2" placeholder="One URL per line"></textarea></div>',
+    '  </div>',
+    '  <div class="flex justify-end gap-3 mt-6">',
+    '    <button class="px-4 py-2 rounded-lg border border-[var(--ss-line)]">Save draft</button>',
+    '    <button class="btn-primary px-5 py-2 rounded-lg font-semibold">✉️ Send to Manager</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- WORKINGSTAFF INPUT 1: Task Execution ---------------------- */
+function renderExecutionCard() {
+  const me = getCurrentUser();
+  const myActiveTasks = SEED.tasks.filter(t => t.assigned_to === me.id && t.status !== 'Approved');
+  if (myActiveTasks.length === 0) {
+    return '<div class="ss-panel p-10 text-center ss-muted">You have no active tasks. Visit <b>My Kanban Board</b> for a full view.</div>';
+  }
+  const t = myActiveTasks[0]; // first active task as the focused card
+  const proj = findById(SEED.projects, t.project_id);
+  const subs = SEED.subtasks.filter(s => s.task_id === t.id);
+  const doneCount = subs.filter(s => s.is_done).length;
+  const pct = subs.length ? Math.round(doneCount / subs.length * 100) : 0;
+
+  const subtaskRows = subs.map(s =>
+    '<li class="flex items-center justify-between gap-3 py-2 border-b border-[var(--ss-line)] last:border-0">' +
+      '<label class="flex items-center gap-3 cursor-pointer">' +
+        '<input type="checkbox" ' + (s.is_done ? 'checked' : '') + ' class="w-auto">' +
+        '<span class="' + (s.is_done ? 'line-through ss-muted' : '') + '">' + escapeHtml(s.title) + '</span>' +
+      '</label>' +
+      '<span class="ss-muted text-xs font-mono">' + (s.done_at ? escapeHtml(fmtDate(s.done_at)) : '—') + '</span>' +
+    '</li>'
+  ).join('');
+
+  return [
+    '<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">',
+    '  <div class="lg:col-span-2 ss-panel p-6">',
+    '    <div class="flex items-start justify-between mb-3">',
+    '      <div>',
+    '        <div class="text-xs ss-muted">' + escapeHtml(proj ? proj.code + ' · ' + proj.title : '') + '</div>',
+    '        <h3 class="text-xl font-semibold">' + escapeHtml(t.title) + '</h3>',
+    '      </div>',
+         statusPill(t.status),
+    '    </div>',
+    '    <div class="grid grid-cols-3 gap-4 mb-4 text-xs">',
+    '      <div class="ss-card p-3"><div class="ss-muted">Expected start</div><div class="font-mono">' + escapeHtml(fmtDate(t.expected_start)) + '</div></div>',
+    '      <div class="ss-card p-3"><div class="ss-muted">Expected due</div><div class="font-mono">' + escapeHtml(fmtDate(t.expected_due))   + '</div></div>',
+    '      <div class="ss-card p-3"><div class="ss-muted">Actual start</div><div class="font-mono">' + escapeHtml(fmtDate(t.actual_start))   + '</div></div>',
+    '    </div>',
+    '    <div class="mb-3"><div class="flex items-center justify-between text-xs mb-1"><span class="ss-muted">Checklist progress</span><span>' + doneCount + '/' + subs.length + ' · ' + pct + '%</span></div><div class="pbar"><div style="width:' + pct + '%"></div></div></div>',
+    '    <ul class="mt-3">' + subtaskRows + '</ul>',
+    '    <div class="flex justify-between mt-5">',
+    '      <button class="px-4 py-2 rounded-lg border border-[var(--ss-line)]">Save progress</button>',
+    '      <button class="btn-primary px-5 py-2 rounded-lg font-semibold">✅ Mark task complete (logs Actual Completion Date)</button>',
+    '    </div>',
+    '  </div>',
+    '  <div class="ss-panel p-6">',
+    '    <h4 class="text-sm font-semibold mb-3 ss-muted uppercase tracking-wider">Other active tasks</h4>',
+    '    <div class="space-y-2">' +
+        myActiveTasks.slice(1).map(o => {
+          const op = findById(SEED.projects, o.project_id);
+          return '<div class="ss-card p-3 text-sm">' +
+            '<div class="font-semibold">' + escapeHtml(o.title) + '</div>' +
+            '<div class="ss-muted text-xs">' + escapeHtml(op ? op.code : '') + ' · due ' + escapeHtml(fmtDate(o.expected_due)) + '</div>' +
+            '</div>';
+        }).join('') +
+    '    </div>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- WORKINGSTAFF INPUT 2: Submission Form --------------------- */
+function renderSubmissionForm() {
+  const me = getCurrentUser();
+  const eligible = SEED.tasks.filter(t => t.assigned_to === me.id);
+  const taskOpts = eligible.map(t => {
+    const proj = findById(SEED.projects, t.project_id);
+    return '<option value="' + escapeHtml(t.id) + '">' + escapeHtml((proj ? proj.code + ' · ' : '') + t.title) + '</option>';
+  }).join('');
+
+  const recent = SEED.work_submissions.filter(w => w.submitted_by === me.id);
+  const recentList = recent.length === 0
+    ? '<div class="ss-muted text-sm">No submissions yet.</div>'
+    : recent.map(w => {
+        const t = findById(SEED.tasks, w.task_id);
+        return '<div class="ss-card p-4 mb-3">' +
+          '<div class="flex items-start justify-between">' +
+            '<div><div class="font-semibold">' + escapeHtml(t ? t.title : '') + '</div><div class="ss-muted text-xs">submitted ' + escapeHtml(fmtDate(w.submitted_at)) + '</div></div>' +
+            statusPill(w.review_status || 'Submitted') +
+          '</div>' +
+          '<p class="text-sm mt-2">' + escapeHtml(w.summary) + '</p>' +
+          (w.delivery_url ? '<a href="' + escapeHtml(w.delivery_url) + '" target="_blank" rel="noopener" class="text-[var(--ss-accent-2)] text-xs break-all">' + escapeHtml(w.delivery_url) + '</a>' : '') +
+          (w.review_notes ? '<div class="text-xs ss-muted mt-2">Reviewer note: ' + escapeHtml(w.review_notes) + '</div>' : '') +
+          '</div>';
+      }).join('');
+
+  return [
+    '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">',
+    '  <div class="ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-1">Submit completed work</h3>',
+    '    <p class="ss-muted text-sm mb-4">Persists into <code>work_submissions</code>; the Client receives a review request.</p>',
+    '    <div class="grid grid-cols-1 gap-4">',
+    '      <div><label>Task</label><select>' + taskOpts + '</select></div>',
+    '      <div><label>Summary of deliverable</label><textarea rows="4" placeholder="What was produced? What should the Client check?"></textarea></div>',
+    '      <div><label>Delivery URL</label><input type="url" placeholder="https://drive.example.com/…"></div>',
+    '      <div><label>Attach release notes</label><textarea rows="3"></textarea></div>',
+    '      <button class="btn-primary py-2.5 rounded-lg font-semibold">📤 Submit for Review</button>',
+    '    </div>',
+    '  </div>',
+    '  <div class="ss-panel p-6">',
+    '    <h3 class="text-lg font-semibold mb-3">My recent submissions</h3>',
+         recentList,
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MANAGER OUTPUT 1: Global Analytics Dashboard -------------- */
+function renderManagerDashboard() {
+  const totalProjects = SEED.projects.length;
+  const inProgress    = SEED.projects.filter(p => p.status === 'InProgress').length;
+  const completed     = SEED.projects.filter(p => p.status === 'Completed').length;
+  const proposed      = SEED.projects.filter(p => p.status === 'Proposed').length;
+
+  const allSubs    = SEED.subtasks.length;
+  const doneSubs   = SEED.subtasks.filter(s => s.is_done).length;
+  const overallPct = allSubs ? Math.round(doneSubs / allSubs * 100) : 0;
+
+  const rows = SEED.projects.map(p => {
+    const prog = projectProgress(p.id);
+    const variance = projectVarianceDays(p.id);
+    let varCell = '<span class="ss-muted">—</span>';
+    if (variance !== null) {
+      if (variance > 0)      varCell = '<span class="pill pill-bad">+' + variance + ' d (late)</span>';
+      else if (variance < 0) varCell = '<span class="pill pill-good">' + variance + ' d (early)</span>';
+      else                   varCell = '<span class="pill pill-info">on time</span>';
+    }
+    const client = findById(SEED.companies, p.client_company_id);
+    return '<tr>' +
+      '<td><div class="font-semibold">' + escapeHtml(p.title) + '</div><div class="ss-muted text-xs">' + escapeHtml(p.code) + '</div></td>' +
+      '<td>' + escapeHtml(client ? client.legal_name : '—') + '</td>' +
+      '<td>' + statusPill(p.status) + '</td>' +
+      '<td><div class="flex items-center gap-2 min-w-[160px]"><div class="pbar flex-1"><div style="width:' + prog.pct + '%"></div></div><span class="text-xs ss-muted whitespace-nowrap">' + prog.pct + '%</span></div></td>' +
+      '<td>' + varCell + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(p.quotation_amount)) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return [
+    '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">',
+       kpi('Total projects',  totalProjects, '#7c5cff'),
+       kpi('In progress',     inProgress,    '#22d3ee'),
+       kpi('Completed',       completed,     '#34d399'),
+       kpi('Proposed',        proposed,      '#fbbf24'),
+    '</div>',
+    '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">',
+    '  <div class="ss-panel p-5 lg:col-span-1">',
+    '    <h4 class="ss-muted text-xs uppercase tracking-wider mb-3">Fleet completion rate</h4>',
+    '    <div class="text-4xl font-bold">' + overallPct + '%</div>',
+    '    <div class="ss-muted text-xs mb-3">' + doneSubs + ' / ' + allSubs + ' subtasks done across all active projects</div>',
+    '    <div class="pbar"><div style="width:' + overallPct + '%"></div></div>',
+    '  </div>',
+    '  <div class="ss-panel p-5 lg:col-span-2">',
+    '    <h4 class="ss-muted text-xs uppercase tracking-wider mb-3">Projects · planned vs. actual</h4>',
+    '    <table class="ss-tbl"><thead><tr><th>Project</th><th>Client</th><th>Status</th><th>Progress</th><th>Variance</th><th class="text-right">Quotation</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '  </div>',
+    '</div>'
+  ].join('');
+}
+
+function kpi(label, value, color) {
+  return '<div class="ss-panel p-5">' +
+    '<div class="ss-muted text-xs uppercase tracking-wider">' + escapeHtml(label) + '</div>' +
+    '<div class="text-3xl font-bold mt-1" style="color:' + color + '">' + escapeHtml(String(value)) + '</div>' +
+    '</div>';
+}
+
+/* ----- MANAGER OUTPUT 2: Financial Ledger ------------------------ */
+function renderFinancialLedger() {
+  const rows = SEED.projects.map(p => {
+    const billed = projectInvoicedTotal(p.id);
+    const ratio  = p.quotation_amount > 0 ? Math.round(billed / p.quotation_amount * 100) : 0;
+    const client = findById(SEED.companies, p.client_company_id);
+    return '<tr>' +
+      '<td><div class="font-semibold">' + escapeHtml(p.title) + '</div><div class="ss-muted text-xs">' + escapeHtml(p.code) + '</div></td>' +
+      '<td>' + escapeHtml(client ? client.legal_name : '—') + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(p.quotation_amount)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(billed)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(p.quotation_amount - billed)) + '</td>' +
+      '<td><div class="flex items-center gap-2 min-w-[150px]"><div class="pbar flex-1"><div style="width:' + Math.min(100, ratio) + '%"></div></div><span class="text-xs ss-muted">' + ratio + '%</span></div></td>' +
+      '</tr>';
+  }).join('');
+
+  const allInvRows = SEED.invoices.map(i => {
+    const proj = findById(SEED.projects, i.project_id);
+    return '<tr>' +
+      '<td class="font-mono">' + escapeHtml(i.invoice_number) + '</td>' +
+      '<td>' + escapeHtml(proj ? proj.code : '—') + '</td>' +
+      '<td>' + statusPill(i.status) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(i.issue_date)) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(i.due_date)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(i.amount_issued)) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const totalQuoted   = SEED.projects.reduce((a,p) => a + Number(p.quotation_amount), 0);
+  const totalInvoiced = SEED.invoices.filter(i => i.status !== 'Void' && i.status !== 'Draft').reduce((a,i) => a + Number(i.amount_issued), 0);
+
+  return [
+    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">',
+       kpi('Quotations on the book', fmtCurrency(totalQuoted),   '#7c5cff'),
+       kpi('Issued (non-void)',      fmtCurrency(totalInvoiced), '#22d3ee'),
+       kpi('Outstanding',            fmtCurrency(totalQuoted - totalInvoiced), '#fbbf24'),
+    '</div>',
+    '<div class="ss-panel p-5 mb-6">',
+    '  <h3 class="text-lg font-semibold mb-4">Quotation vs. Invoiced (per project)</h3>',
+    '  <table class="ss-tbl"><thead><tr><th>Project</th><th>Client</th><th class="text-right">Quotation</th><th class="text-right">Invoiced</th><th class="text-right">Remaining</th><th>Billing %</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '</div>',
+    '<div class="ss-panel p-5">',
+    '  <h3 class="text-lg font-semibold mb-4">All invoices</h3>',
+    '  <table class="ss-tbl"><thead><tr><th>Invoice #</th><th>Project</th><th>Status</th><th>Issued</th><th>Due</th><th class="text-right">Amount</th></tr></thead><tbody>' + allInvRows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MANAGER OUTPUT 3: Performance Grid ------------------------ */
+function renderPerformanceGrid() {
+  const staff = SEED.users.filter(u => u.role === 'WorkingStaff');
+  const rows = staff.map(u => {
+    const v = staffVelocity(u.id);
+    const completedTasks = SEED.tasks.filter(t => t.assigned_to === u.id && t.status === 'Approved');
+    // average lead time (actual_completed_at - actual_start) in days
+    const leads = completedTasks.map(t => daysBetween(t.actual_start, t.actual_completed_at)).filter(x => x !== null);
+    const avgLead = leads.length ? Math.round(leads.reduce((a,b) => a+b, 0) / leads.length) : null;
+    const subDonePct = v.total ? Math.round(v.done / v.total * 100) : 0;
+    return '<tr>' +
+      '<td><div class="font-semibold">' + escapeHtml(u.full_name) + '</div><div class="ss-muted text-xs">' + escapeHtml(u.email) + '</div></td>' +
+      '<td class="font-mono">' + v.tasks + '</td>' +
+      '<td class="font-mono">' + completedTasks.length + '</td>' +
+      '<td class="font-mono">' + v.done + ' / ' + v.total + '</td>' +
+      '<td><div class="flex items-center gap-2 min-w-[150px]"><div class="pbar flex-1"><div style="width:' + subDonePct + '%"></div></div><span class="text-xs ss-muted">' + subDonePct + '%</span></div></td>' +
+      '<td class="font-mono">' + (avgLead === null ? '—' : avgLead + ' d') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return [
+    '<div class="ss-panel p-5">',
+    '  <h3 class="text-lg font-semibold mb-1">WorkingStaff performance</h3>',
+    '  <p class="ss-muted text-sm mb-5">Velocity is measured by completed subtasks and average lead time on Approved tasks.</p>',
+    '  <table class="ss-tbl"><thead><tr><th>Member</th><th>Tasks assigned</th><th>Tasks approved</th><th>Subtasks done</th><th>Subtask completion</th><th>Avg lead time</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- CLIENT OUTPUT 1: Project Tracker -------------------------- */
+function renderClientTracker() {
+  const me = getCurrentUser();
+  const myProjects = SEED.projects.filter(p => p.client_company_id === me.company_id);
+
+  if (myProjects.length === 0) {
+    return '<div class="ss-panel p-10 text-center ss-muted">No projects yet. Use <b>New Project Proposal</b> to start one.</div>';
+  }
+
+  const cards = myProjects.map(p => {
+    const prog = projectProgress(p.id);
+    const tasks = SEED.tasks.filter(t => t.project_id === p.id);
+    const activeTasks = tasks.filter(t => t.status === 'InProgress' || t.status === 'Pending').length;
+    const billed = projectInvoicedTotal(p.id);
+    return '<div class="ss-panel p-6">' +
+      '<div class="flex items-start justify-between mb-3">' +
+        '<div><div class="text-xs ss-muted">' + escapeHtml(p.code) + '</div><h3 class="text-lg font-semibold">' + escapeHtml(p.title) + '</h3></div>' +
+        statusPill(p.status) +
+      '</div>' +
+      '<p class="text-sm ss-muted mb-4">' + escapeHtml(p.description) + '</p>' +
+      '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-4">' +
+        '<div class="ss-card p-3"><div class="ss-muted">Planned start</div><div class="font-mono">' + escapeHtml(fmtDate(p.planned_start)) + '</div></div>' +
+        '<div class="ss-card p-3"><div class="ss-muted">Planned end</div><div class="font-mono">'   + escapeHtml(fmtDate(p.planned_end))   + '</div></div>' +
+        '<div class="ss-card p-3"><div class="ss-muted">Quotation</div><div class="font-mono">'    + escapeHtml(fmtCurrency(p.quotation_amount)) + '</div></div>' +
+        '<div class="ss-card p-3"><div class="ss-muted">Invoiced</div><div class="font-mono">'     + escapeHtml(fmtCurrency(billed)) + '</div></div>' +
+      '</div>' +
+      '<div class="mb-3"><div class="flex items-center justify-between text-xs mb-1"><span class="ss-muted">Overall completion</span><span>' + prog.pct + '% · ' + prog.done + '/' + prog.total + ' subtasks · ' + activeTasks + ' active tasks</span></div><div class="pbar"><div style="width:' + prog.pct + '%"></div></div></div>' +
+      '<div class="text-xs ss-muted mt-3">Tasks: ' + tasks.map(t => '<span class="inline-block bg-[var(--ss-bg-2)] border border-[var(--ss-line)] rounded-md px-2 py-0.5 mr-1 mb-1">' + escapeHtml(t.title) + ' ' + statusPill(t.status) + '</span>').join('') + '</div>' +
+      '</div>';
+  }).join('<div class="h-4"></div>');
+
+  return cards;
+}
+
+/* ----- CLIENT OUTPUT 2: Invoices --------------------------------- */
+function renderClientInvoices() {
+  const me = getCurrentUser();
+  const myProjectIds = SEED.projects.filter(p => p.client_company_id === me.company_id).map(p => p.id);
+  const myInvoices   = SEED.invoices.filter(i => myProjectIds.includes(i.project_id));
+
+  if (myInvoices.length === 0) {
+    return '<div class="ss-panel p-10 text-center ss-muted">No invoices have been issued to your company yet.</div>';
+  }
+
+  const totals = {
+    paid:    myInvoices.filter(i => i.status === 'Paid').reduce((a,i) => a + Number(i.amount_issued), 0),
+    issued:  myInvoices.filter(i => i.status === 'Issued').reduce((a,i) => a + Number(i.amount_issued), 0),
+    overdue: myInvoices.filter(i => i.status === 'Overdue').reduce((a,i) => a + Number(i.amount_issued), 0)
+  };
+
+  const rows = myInvoices.map(i => {
+    const p = findById(SEED.projects, i.project_id);
+    return '<tr>' +
+      '<td class="font-mono">' + escapeHtml(i.invoice_number) + '</td>' +
+      '<td><div>' + escapeHtml(p ? p.title : '') + '</div><div class="ss-muted text-xs">' + escapeHtml(p ? p.code : '') + '</div></td>' +
+      '<td>' + statusPill(i.status) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(i.issue_date)) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(i.due_date)) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(i.paid_at)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(i.amount_issued)) + '</td>' +
+      '<td><button class="text-xs ss-muted border border-[var(--ss-line)] rounded-md px-2 py-1 hover:text-white">⬇ Download PDF</button></td>' +
+    '</tr>';
+  }).join('');
+
+  return [
+    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">',
+       kpi('Paid',    fmtCurrency(totals.paid),    '#34d399'),
+       kpi('Issued',  fmtCurrency(totals.issued),  '#22d3ee'),
+       kpi('Overdue', fmtCurrency(totals.overdue), '#f87171'),
+    '</div>',
+    '<div class="ss-panel p-5">',
+    '  <h3 class="text-lg font-semibold mb-4">Statement of invoices</h3>',
+    '  <table class="ss-tbl"><thead><tr><th>Invoice #</th><th>Project</th><th>Status</th><th>Issued</th><th>Due</th><th>Paid on</th><th class="text-right">Amount</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- WORKINGSTAFF OUTPUT: Kanban ------------------------------- */
+function renderStaffKanban() {
+  const me = getCurrentUser();
+  const myTasks = SEED.tasks.filter(t => t.assigned_to === me.id);
+
+  const columns = [
+    { key: 'todo',  label: 'To Do',       statuses: ['Pending'],          color: '#fbbf24' },
+    { key: 'doing', label: 'In Progress', statuses: ['InProgress','Submitted'], color: '#22d3ee' },
+    { key: 'done',  label: 'Done',        statuses: ['Approved'],         color: '#34d399' },
+    { key: 'block', label: 'Blocked',     statuses: ['Blocked','Rejected'],color: '#f87171' }
+  ];
+
+  const cards = (statuses) => myTasks.filter(t => statuses.includes(t.status)).map(t => {
+    const proj = findById(SEED.projects, t.project_id);
+    const subs = SEED.subtasks.filter(s => s.task_id === t.id);
+    const doneCount = subs.filter(s => s.is_done).length;
+    const pct = subs.length ? Math.round(doneCount / subs.length * 100) : 0;
+    return '<div class="kanban-card">' +
+      '<div class="text-[10px] ss-muted">' + escapeHtml(proj ? proj.code : '') + '</div>' +
+      '<div class="font-semibold text-sm mb-1">' + escapeHtml(t.title) + '</div>' +
+      '<div class="ss-muted text-xs mb-2">due ' + escapeHtml(fmtDate(t.expected_due)) + '</div>' +
+      (subs.length ? '<div class="pbar mb-1"><div style="width:' + pct + '%"></div></div><div class="ss-muted text-[10px]">' + doneCount + '/' + subs.length + ' subtasks</div>' : '') +
+    '</div>';
+  }).join('') || '<div class="ss-muted text-xs">— empty —</div>';
+
+  return [
+    '<div class="grid grid-cols-1 md:grid-cols-4 gap-4">',
+      columns.map(c =>
+        '<div class="kanban-col">' +
+          '<div class="flex items-center justify-between mb-3"><h4 class="font-semibold text-sm" style="color:' + c.color + '">' + escapeHtml(c.label) + '</h4>' +
+          '<span class="ss-muted text-xs">' + myTasks.filter(t => c.statuses.includes(t.status)).length + '</span></div>' +
+          cards(c.statuses) +
+        '</div>'
+      ).join(''),
+    '</div>'
+  ].join('');
+}
+
+/* ----- MIS REPORT 1: Schedule Variance --------------------------- */
+function renderVarianceReport() {
+  // task-level variance: (actual_completed_at - expected_due) in days
+  const rows = SEED.tasks.map(t => {
+    const proj = findById(SEED.projects, t.project_id);
+    const assignee = findById(SEED.users, t.assigned_to);
+    const variance = (t.actual_completed_at) ? daysBetween(t.expected_due, t.actual_completed_at) : null;
+    let vCell;
+    if (variance === null) {
+      vCell = '<span class="pill pill-neutral">in flight</span>';
+    } else if (variance > 2) {
+      vCell = '<span class="pill pill-bad">+' + variance + ' d late</span>';
+    } else if (variance > 0) {
+      vCell = '<span class="pill pill-warn">+' + variance + ' d</span>';
+    } else if (variance === 0) {
+      vCell = '<span class="pill pill-info">on time</span>';
+    } else {
+      vCell = '<span class="pill pill-good">' + variance + ' d (early)</span>';
+    }
+    return '<tr>' +
+      '<td>' + escapeHtml(proj ? proj.code : '—') + '</td>' +
+      '<td>' + escapeHtml(t.title) + '</td>' +
+      '<td>' + escapeHtml(assignee ? assignee.full_name : '—') + '</td>' +
+      '<td>' + escapeHtml(fmtDate(t.expected_due)) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(t.actual_completed_at)) + '</td>' +
+      '<td>' + vCell + '</td>' +
+      '<td>' + statusPill(t.status) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  // project level
+  const projRows = SEED.projects.map(p => {
+    const v = projectVarianceDays(p.id);
+    let vCell = v === null
+      ? '<span class="pill pill-neutral">in flight</span>'
+      : (v > 0  ? '<span class="pill pill-bad">+' + v + ' d</span>'
+        : v < 0 ? '<span class="pill pill-good">' + v + ' d (early)</span>'
+                : '<span class="pill pill-info">on time</span>');
+    return '<tr>' +
+      '<td>' + escapeHtml(p.code) + '</td>' +
+      '<td>' + escapeHtml(p.title) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(p.planned_end)) + '</td>' +
+      '<td>' + escapeHtml(fmtDate(p.actual_end)) + '</td>' +
+      '<td>' + vCell + '</td>' +
+      '<td>' + statusPill(p.status) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return [
+    '<div class="ss-panel p-5 mb-6">',
+    '  <div class="flex items-start justify-between mb-3"><div><h3 class="text-lg font-semibold">Project-level variance</h3>',
+    '    <p class="ss-muted text-xs">Δ = actual_end − planned_end (positive = late).</p></div>',
+    '    <button class="text-xs ss-muted border border-[var(--ss-line)] rounded-md px-3 py-1.5">⬇ Export CSV</button></div>',
+    '  <table class="ss-tbl"><thead><tr><th>Code</th><th>Project</th><th>Planned end</th><th>Actual end</th><th>Variance</th><th>Status</th></tr></thead><tbody>' + projRows + '</tbody></table>',
+    '</div>',
+    '<div class="ss-panel p-5">',
+    '  <h3 class="text-lg font-semibold mb-3">Task-level variance</h3>',
+    '  <table class="ss-tbl"><thead><tr><th>Project</th><th>Task</th><th>Assignee</th><th>Expected due</th><th>Actual completed</th><th>Variance</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ----- MIS REPORT 2: Financial Yield ----------------------------- */
+function renderYieldReport() {
+  // group by client company
+  const clients = SEED.companies.filter(c => !c.is_internal);
+  const rows = clients.map(c => {
+    const projs = SEED.projects.filter(p => p.client_company_id === c.id);
+    const quoted = projs.reduce((a,p) => a + Number(p.quotation_amount), 0);
+    const invoiced = projs.reduce((a,p) => a + projectInvoicedTotal(p.id), 0);
+    const realised = projs.reduce((a,p) =>
+      a + SEED.invoices
+            .filter(i => i.project_id === p.id && i.status === 'Paid')
+            .reduce((s,i) => s + Number(i.amount_issued), 0), 0);
+    const yieldPct = quoted ? Math.round(invoiced / quoted * 100) : 0;
+    const realisedPct = invoiced ? Math.round(realised / invoiced * 100) : 0;
+    return '<tr>' +
+      '<td><div class="font-semibold">' + escapeHtml(c.legal_name) + '</div><div class="ss-muted text-xs">' + escapeHtml(c.industry) + '</div></td>' +
+      '<td class="font-mono">' + projs.length + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(quoted)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(invoiced)) + '</td>' +
+      '<td class="font-mono text-right">' + escapeHtml(fmtCurrency(realised)) + '</td>' +
+      '<td><div class="flex items-center gap-2 min-w-[150px]"><div class="pbar flex-1"><div style="width:' + Math.min(100,yieldPct) + '%"></div></div><span class="text-xs ss-muted">' + yieldPct + '%</span></div></td>' +
+      '<td><div class="flex items-center gap-2 min-w-[150px]"><div class="pbar flex-1"><div style="width:' + Math.min(100,realisedPct) + '%;background:linear-gradient(90deg,#34d399,#22d3ee)"></div></div><span class="text-xs ss-muted">' + realisedPct + '%</span></div></td>' +
+    '</tr>';
+  }).join('');
+
+  const totalQuoted   = SEED.projects.reduce((a,p) => a + Number(p.quotation_amount), 0);
+  const totalInvoiced = SEED.projects.reduce((a,p) => a + projectInvoicedTotal(p.id), 0);
+  const totalRealised = SEED.invoices.filter(i => i.status === 'Paid').reduce((a,i) => a + Number(i.amount_issued), 0);
+
+  return [
+    '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">',
+       kpi('Total quoted',     fmtCurrency(totalQuoted),   '#7c5cff'),
+       kpi('Total invoiced',   fmtCurrency(totalInvoiced), '#22d3ee'),
+       kpi('Total cash in (Paid)', fmtCurrency(totalRealised), '#34d399'),
+    '</div>',
+    '<div class="ss-panel p-5">',
+    '  <h3 class="text-lg font-semibold mb-1">Yield by Client</h3>',
+    '  <p class="ss-muted text-xs mb-4">"Yield %" = invoiced / quoted. "Realised %" = paid / invoiced.</p>',
+    '  <table class="ss-tbl"><thead><tr><th>Client</th><th>Projects</th><th class="text-right">Quoted</th><th class="text-right">Invoiced</th><th class="text-right">Realised</th><th>Yield %</th><th>Realised %</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '</div>'
+  ].join('');
+}
+
+/* ==================================================================
+   9.  EVENT WIRING (attached ONCE at boot — never rebound)
+   ================================================================== */
+function attachOneTimeListeners() {
+  // Login persona dropdown
+  const sel = document.getElementById('persona-select');
+  sel.innerHTML = SEED.users.map(u => {
+    const co = findById(SEED.companies, u.company_id);
+    return '<option value="' + escapeHtml(u.id) + '">' + escapeHtml(u.full_name + ' · ' + u.role + ' · ' + (co ? co.legal_name : '?')) + '</option>';
+  }).join('');
+
+  document.getElementById('login-btn').addEventListener('click', function () {
+    login(sel.value);
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', logout);
+
+  // Role switcher (event delegation on the row)
+  document.querySelectorAll('.role-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      switchRole(btn.dataset.role);
+    });
+  });
+
+  // Sidebar navigation (event delegation: parent listens, looks for data-nav)
+  document.getElementById('sidebar-nav').addEventListener('click', function (e) {
+    const target = e.target.closest('[data-nav]');
+    if (!target) return;
+    appState.activeView = target.getAttribute('data-nav');
+    renderShell();
+  });
+}
+
+/* ==================================================================
+   10. BOOT
+   ================================================================== */
+window.addEventListener('DOMContentLoaded', function () {
+  // Mermaid: initialise (theme; will run on demand when DFD view is shown)
+  try {
+    if (window.mermaid) {
+      window.mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+    }
+  } catch (err) {
+    console.warn('Mermaid init failed: ' + err.message);
+  }
+
+  attachOneTimeListeners();
+});
+</script>
+</body>
+</html>
