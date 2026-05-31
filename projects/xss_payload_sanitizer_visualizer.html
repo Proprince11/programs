@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XSS Payload Sanitizer Visualizer</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--danger:#f87171;--safe:#4ade80;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:6px}
+  .sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  textarea{width:100%;height:80px;background:#05080f;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:monospace;font-size:13px;color:var(--txt);resize:vertical}
+  .payloads button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;margin:3px;font-family:monospace}
+  .payloads button:hover{border-color:var(--danger);color:var(--danger)}
+  .ctx{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .card{background:#05080f;border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h3{font-size:12px;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between;text-transform:uppercase;letter-spacing:1px}
+  .badge{padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700}
+  .b-danger{background:#2a1216;color:var(--danger)}.b-safe{background:#0f2a1a;color:var(--safe)}
+  .code{font-family:monospace;font-size:12px;background:#0a0e16;padding:8px;border-radius:6px;word-break:break-all;line-height:1.5;margin:6px 0}
+  .render{background:#fff;color:#000;padding:8px;border-radius:6px;font-size:13px;min-height:36px;word-break:break-all}
+  .note{font-size:11px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<h1>🛡️ XSS Payload Sanitizer Visualizer</h1>
+<div class="sub">Educational defensive tool: see how context-aware output encoding neutralizes injection. Payloads are rendered inside a sandboxed iframe so nothing executes on this page.</div>
+<div class="panel">
+  <textarea id="input" spellcheck="false">&lt;img src=x onerror="alert(1)"&gt;Hello "world" &amp; 'friends'</textarea>
+  <div class="payloads" style="margin-top:8px">
+    <button data-p="<script>alert(document.cookie)<\/script>">script tag</button>
+    <button data-p='<img src=x onerror=alert(1)>'>img onerror</button>
+    <button data-p='"><svg onload=alert(1)>'>attribute breakout</button>
+    <button data-p="javascript:alert(1)">javascript: URI</button>
+    <button data-p="<a href='&#106;avascript:alert(1)'>x</a>">entity-encoded</button>
+    <button data-p="'; DROP TABLE users;--">sql-ish</button>
+  </div>
+</div>
+<div class="ctx" id="contexts"></div>
+<script>
+"use strict";
+// encoders
+function htmlEncode(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function attrEncode(s){return s.replace(/[^a-zA-Z0-9]/g,c=>'&#'+c.charCodeAt(0)+';');}
+function jsEncode(s){return s.replace(/[^a-zA-Z0-9]/g,c=>{const h=c.charCodeAt(0).toString(16);return'\\x'+h.padStart(2,'0');});}
+function urlEncode(s){return encodeURIComponent(s);}
+function isDangerous(s){return /<\s*script|on\w+\s*=|javascript:|<\s*img|<\s*svg|<\s*iframe|<\s*a\s/i.test(s);}
+const CONTEXTS=[
+  {name:'No encoding (VULNERABLE)',enc:s=>s,sink:'innerHTML',danger:true,desc:'Raw insertion into HTML — the classic stored/reflected XSS sink.'},
+  {name:'HTML entity encoding',enc:htmlEncode,sink:'innerHTML',danger:false,desc:'Correct for HTML text content. < > & " \' become entities; the browser renders them as literal text.'},
+  {name:'HTML attribute encoding',enc:attrEncode,sink:'attr',danger:false,desc:'Numeric entity encoding prevents attribute-value breakout (the "> trick).'},
+  {name:'JavaScript string encoding',enc:jsEncode,sink:'js',danger:false,desc:'\\xHH hex escaping for data placed inside a <script> string literal.'},
+  {name:'URL component encoding',enc:urlEncode,sink:'url',danger:false,desc:'Percent-encoding for query parameters / href values.'},
+  {name:'Strip tags (allowlist text)',enc:s=>s.replace(/<[^>]*>/g,''),sink:'innerHTML',danger:false,desc:'Aggressive sanitization removing all markup — safe but lossy.'}
+];
+function renderSink(card,sink,encoded,raw){
+  const box=card.querySelector('.render');
+  // render inside sandboxed iframe (no scripts allowed) to demonstrate safely
+  const ifr=document.createElement('iframe');ifr.setAttribute('sandbox','');ifr.style.cssText='width:100%;border:0;height:40px;background:#fff;border-radius:6px';
+  let docHtml='';
+  if(sink==='innerHTML')docHtml=`<div>${encoded}</div>`;
+  else if(sink==='attr')docHtml=`<div title="${encoded}">hover: title attribute = [${encoded}]</div>`;
+  else if(sink==='js')docHtml=`<div>var x = "${encoded}";</div>`;
+  else if(sink==='url')docHtml=`<div>https://site/?q=${encoded}</div>`;
+  ifr.srcdoc=`<body style="margin:4px;font:13px system-ui;color:#000">${docHtml}</body>`;
+  box.innerHTML='';box.appendChild(ifr);
+}
+function update(){
+  const raw=document.getElementById('input').value;
+  const wrap=document.getElementById('contexts');wrap.innerHTML='';
+  CONTEXTS.forEach(ctx=>{
+    const encoded=ctx.enc(raw);
+    const stillDangerous=ctx.danger&&isDangerous(raw);
+    const card=document.createElement('div');card.className='card';
+    card.innerHTML=`<h3>${ctx.name}<span class="badge ${stillDangerous?'b-danger':'b-safe'}">${stillDangerous?'⚠ EXECUTES':'✓ NEUTRALIZED'}</span></h3>
+      <div class="note">${ctx.desc}</div>
+      <div class="code">${htmlEncode(encoded).slice(0,300)}</div>
+      <div class="note">Rendered safely (sandboxed):</div>
+      <div class="render"></div>`;
+    wrap.appendChild(card);renderSink(card,ctx.sink,encoded,raw);
+  });
+}
+document.getElementById('input').oninput=update;
+document.querySelectorAll('.payloads button').forEach(b=>b.onclick=()=>{document.getElementById('input').value=b.dataset.p;update();});
+update();
+</script>
+</body>
+</html>

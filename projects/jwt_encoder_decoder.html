@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JWT Encoder / Decoder</title>
+<style>
+  :root{--panel:#11151f;--accent:#fb7185;--blue:#60a5fa;--purple:#a78bfa;--green:#34d399;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  textarea{width:100%;background:#05080f;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:'SF Mono',monospace;font-size:13px;resize:vertical;line-height:1.6;color:var(--txt)}
+  #token{height:200px;word-break:break-all}
+  .jwt-h{color:var(--accent)}.jwt-p{color:var(--purple)}.jwt-s{color:var(--blue)}
+  .seg{height:120px}
+  .row{display:flex;gap:8px;align-items:center;margin:10px 0}
+  select,input{background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-family:monospace}
+  input{flex:1}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 14px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+  .verdict{padding:10px;border-radius:8px;text-align:center;font-weight:600;margin-top:10px}
+  .ok{background:#0f2a1a;color:var(--green)}.bad{background:#2a1216;color:#f87171}
+  .claims{font-size:12px;font-family:monospace;margin-top:8px}
+  .claims div{padding:3px 0;border-bottom:1px solid var(--line)}
+  .exp{color:#fbbf24}
+</style>
+</head>
+<body>
+<h1>🔐 JWT Encoder / Decoder <span style="font-size:12px;color:var(--muted)">— HS256/384/512 via Web Crypto (client-side only)</span></h1>
+<div class="layout">
+  <div class="panel">
+    <h2>Encoded token</h2>
+    <textarea id="token" spellcheck="false"></textarea>
+    <div class="row">
+      <select id="alg"><option>HS256</option><option>HS384</option><option>HS512</option></select>
+      <input id="secret" value="your-256-bit-secret" placeholder="signing secret">
+    </div>
+    <div class="verdict" id="verdict">—</div>
+    <div class="claims" id="claims"></div>
+  </div>
+  <div class="panel">
+    <h2 class="jwt-h">Header</h2>
+    <textarea id="header" class="seg" spellcheck="false">{
+  "alg": "HS256",
+  "typ": "JWT"
+}</textarea>
+    <h2 class="jwt-p">Payload</h2>
+    <textarea id="payload" class="seg" spellcheck="false">{
+  "sub": "1234567890",
+  "name": "Ada Lovelace",
+  "admin": true,
+  "iat": 1700000000
+}</textarea>
+    <div class="row">
+      <button id="encode">⚙ Sign &amp; Encode →</button>
+      <button id="addExp">+ exp (1h)</button>
+      <button id="addIat">+ iat (now)</button>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+// base64url helpers
+function b64urlEncode(bytes){let bin='';bytes.forEach(b=>bin+=String.fromCharCode(b));return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function b64urlEncodeStr(str){return b64urlEncode(new TextEncoder().encode(str));}
+function b64urlDecode(str){str=str.replace(/-/g,'+').replace(/_/g,'/');while(str.length%4)str+='=';const bin=atob(str);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return bytes;}
+function b64urlDecodeStr(str){return new TextDecoder().decode(b64urlDecode(str));}
+const ALGMAP={HS256:'SHA-256',HS384:'SHA-384',HS512:'SHA-512'};
+async function sign(data,secret,alg){
+  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:ALGMAP[alg]},false,['sign']);
+  const sig=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(data));
+  return b64urlEncode(new Uint8Array(sig));
+}
+async function encode(){
+  let header,payload;
+  try{header=JSON.parse(document.getElementById('header').value);payload=JSON.parse(document.getElementById('payload').value);}
+  catch(e){document.getElementById('verdict').className='verdict bad';document.getElementById('verdict').textContent='JSON error: '+e.message;return;}
+  const alg=document.getElementById('alg').value;header.alg=alg;header.typ='JWT';
+  document.getElementById('header').value=JSON.stringify(header,null,2);
+  const h=b64urlEncodeStr(JSON.stringify(header));
+  const p=b64urlEncodeStr(JSON.stringify(payload));
+  const sig=await sign(h+'.'+p,document.getElementById('secret').value,alg);
+  document.getElementById('token').value=h+'.'+p+'.'+sig;
+  colorToken();await verify();
+}
+async function decode(){
+  const tok=document.getElementById('token').value.trim();
+  const parts=tok.split('.');
+  if(parts.length!==3){document.getElementById('verdict').className='verdict bad';document.getElementById('verdict').textContent='Malformed token (need 3 segments)';return;}
+  try{
+    const header=JSON.parse(b64urlDecodeStr(parts[0]));
+    const payload=JSON.parse(b64urlDecodeStr(parts[1]));
+    document.getElementById('header').value=JSON.stringify(header,null,2);
+    document.getElementById('payload').value=JSON.stringify(payload,null,2);
+    if(header.alg)document.getElementById('alg').value=header.alg;
+    renderClaims(payload);
+  }catch(e){document.getElementById('verdict').className='verdict bad';document.getElementById('verdict').textContent='Decode error: '+e.message;return;}
+  await verify();
+}
+async function verify(){
+  const tok=document.getElementById('token').value.trim();const parts=tok.split('.');
+  if(parts.length!==3)return;
+  const alg=document.getElementById('alg').value;
+  let expected;try{expected=await sign(parts[0]+'.'+parts[1],document.getElementById('secret').value,alg);}catch(e){return;}
+  const v=document.getElementById('verdict');
+  if(expected===parts[2]){v.className='verdict ok';v.textContent='✓ Signature verified';}
+  else{v.className='verdict bad';v.textContent='✗ Invalid signature';}
+  try{const payload=JSON.parse(b64urlDecodeStr(parts[1]));renderClaims(payload);}catch{}
+}
+function renderClaims(payload){
+  const now=Math.floor(Date.now()/1000);let html='';
+  for(const k in payload){
+    let extra='';
+    if((k==='exp'||k==='iat'||k==='nbf')&&typeof payload[k]==='number'){const d=new Date(payload[k]*1000);extra=` <span class="exp">(${d.toLocaleString()})</span>`;if(k==='exp')extra+=payload[k]<now?' <b style="color:#f87171">EXPIRED</b>':' <b style="color:#34d399">valid</b>';}
+    html+=`<div><b>${k}</b>: ${JSON.stringify(payload[k])}${extra}</div>`;
+  }
+  document.getElementById('claims').innerHTML=html;
+}
+function colorToken(){/* visual only */}
+document.getElementById('encode').onclick=encode;
+document.getElementById('token').oninput=decode;
+document.getElementById('secret').oninput=verify;
+document.getElementById('alg').onchange=encode;
+document.getElementById('addExp').onclick=()=>{try{const p=JSON.parse(document.getElementById('payload').value);p.exp=Math.floor(Date.now()/1000)+3600;document.getElementById('payload').value=JSON.stringify(p,null,2);}catch{}};
+document.getElementById('addIat').onclick=()=>{try{const p=JSON.parse(document.getElementById('payload').value);p.iat=Math.floor(Date.now()/1000);document.getElementById('payload').value=JSON.stringify(p,null,2);}catch{}};
+encode();
+</script>
+</body>
+</html>

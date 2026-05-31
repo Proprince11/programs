@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Music Pattern Visualizer</title>
+<style>
+  :root{--bg:#0a0e14;--panel:#121821;--accent:#37e2d5;--accent2:#ff5d8f;--txt:#e6edf3;--muted:#7d8590;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;padding:10px 18px;background:var(--panel);border-bottom:1px solid #1f2733}
+  header h1{font-size:16px;font-weight:600;letter-spacing:.5px}
+  .ctrl{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  button{background:#1f2733;color:var(--txt);border:1px solid #2d3848;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;transition:.15s}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.active{background:var(--accent);color:#04110f;border-color:var(--accent)}
+  input[type=range]{accent-color:var(--accent)}
+  select{background:#1f2733;color:var(--txt);border:1px solid #2d3848;border-radius:6px;padding:6px}
+  .wrap{display:flex;height:calc(100vh - 53px)}
+  .seq{flex:0 0 auto;padding:16px;overflow:auto}
+  .grid{display:grid;gap:3px}
+  .cell{width:30px;height:30px;border-radius:5px;background:#1a2230;border:1px solid #232d3d;cursor:pointer;transition:.08s}
+  .cell.on{box-shadow:0 0 8px var(--accent)}
+  .cell.beat{outline:2px solid var(--accent2)}
+  .rowlabel{display:flex;align-items:center;font-size:11px;color:var(--muted);width:60px}
+  canvas{flex:1;background:#05080d;display:block}
+  .tag{font-size:11px;padding:2px 8px;border-radius:10px;background:#1f2733;color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎵 MUSIC PATTERN VISUALIZER</h1>
+  <button id="play">▶ Play</button>
+  <button id="clear">Clear</button>
+  <button id="rand">Randomize</button>
+  <div class="ctrl">BPM <input type="range" id="bpm" min="60" max="220" value="120"><span id="bpmv">120</span></div>
+  <div class="ctrl">Mode <select id="vmode"><option value="radial">Radial</option><option value="bars">Bars</option><option value="lissajous">Lissajous</option></select></div>
+  <div class="ctrl">Wave <select id="wave"><option>sine</option><option>triangle</option><option>square</option><option>sawtooth</option></select></div>
+  <span class="tag" id="step">step 0</span>
+</header>
+<div class="wrap">
+  <div class="seq">
+    <div id="grid" class="grid"></div>
+  </div>
+  <canvas id="cv"></canvas>
+</div>
+<script>
+"use strict";
+// ----- Pentatonic scale across rows (Hz) -----
+const NOTES = [
+  {n:'C5',f:523.25},{n:'A4',f:440.00},{n:'G4',f:392.00},{n:'E4',f:329.63},
+  {n:'D4',f:293.66},{n:'C4',f:261.63},{n:'A3',f:220.00},{n:'G3',f:196.00}
+];
+const STEPS = 16, ROWS = NOTES.length;
+let pattern = Array.from({length:ROWS},()=>new Array(STEPS).fill(false));
+let playing=false, current=0, lastTime=0, audioCtx=null, analyser=null, freqData=null;
+
+const gridEl=document.getElementById('grid');
+gridEl.style.gridTemplateColumns=`60px repeat(${STEPS},30px)`;
+const cells=[];
+for(let r=0;r<ROWS;r++){
+  const lbl=document.createElement('div');lbl.className='rowlabel';lbl.textContent=NOTES[r].n;gridEl.appendChild(lbl);
+  cells[r]=[];
+  for(let c=0;c<STEPS;c++){
+    const d=document.createElement('div');
+    d.className='cell'+(c%4===0?' beat':'');
+    d.onclick=()=>{pattern[r][c]=!pattern[r][c];render();};
+    gridEl.appendChild(d);cells[r][c]=d;
+  }
+}
+function render(){
+  for(let r=0;r<ROWS;r++)for(let c=0;c<STEPS;c++){
+    const on=pattern[r][c];
+    cells[r][c].classList.toggle('on',on);
+    cells[r][c].style.background=on?`hsl(${170+r*18} 80% 55%)`:'';
+  }
+}
+function ensureAudio(){
+  if(audioCtx)return;
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  analyser=audioCtx.createAnalyser();analyser.fftSize=512;
+  analyser.connect(audioCtx.destination);
+  freqData=new Uint8Array(analyser.frequencyBinCount);
+}
+function playColumn(col){
+  ensureAudio();
+  const now=audioCtx.currentTime;
+  const wave=document.getElementById('wave').value;
+  for(let r=0;r<ROWS;r++){
+    if(!pattern[r][col])continue;
+    const osc=audioCtx.createOscillator();
+    const gain=audioCtx.createGain();
+    osc.type=wave;osc.frequency.value=NOTES[r].f;
+    // ADSR-ish envelope
+    gain.gain.setValueAtTime(0,now);
+    gain.gain.linearRampToValueAtTime(0.22,now+0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001,now+0.4);
+    osc.connect(gain);gain.connect(analyser);
+    osc.start(now);osc.stop(now+0.45);
+  }
+}
+// ----- main loop -----
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth*devicePixelRatio;cv.height=cv.clientHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
+window.addEventListener('resize',resize);resize();
+
+let phase=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const bpm=+document.getElementById('bpm').value;
+  const stepDur=60000/bpm/4; // 16th notes
+  if(playing && ts-lastTime>=stepDur){
+    lastTime=ts;
+    for(let r=0;r<ROWS;r++)cells[r][current].style.outline='';
+    current=(current+1)%STEPS;
+    playColumn(current);
+    document.getElementById('step').textContent='step '+current;
+    for(let r=0;r<ROWS;r++)cells[r][current].style.outline='2px solid #fff';
+  }
+  draw(ts);
+}
+function draw(ts){
+  const W=cv.clientWidth,H=cv.clientHeight;
+  ctx.fillStyle='rgba(5,8,13,0.25)';ctx.fillRect(0,0,W,H);
+  let amp=0;
+  if(analyser){analyser.getByteFrequencyData(freqData);for(const v of freqData)amp+=v;amp/=freqData.length;}
+  phase+=0.01+amp/4000;
+  const mode=document.getElementById('vmode').value;
+  const cx=W/2,cy=H/2;
+  if(mode==='radial'){
+    const bins=freqData?freqData.length:128;
+    for(let i=0;i<bins;i++){
+      const v=freqData?freqData[i]:0;
+      const a=(i/bins)*Math.PI*2+phase;
+      const r0=80+amp*0.5,r1=r0+v*0.9+10;
+      ctx.strokeStyle=`hsl(${170+i+ts/40%200} 90% ${40+v/6}%)`;
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(cx+Math.cos(a)*r0,cy+Math.sin(a)*r0);
+      ctx.lineTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);
+      ctx.stroke();
+    }
+  }else if(mode==='bars'){
+    const bins=freqData?freqData.length:64,bw=W/bins;
+    for(let i=0;i<bins;i++){
+      const v=freqData?freqData[i]:0;
+      ctx.fillStyle=`hsl(${170+i*1.5} 85% ${30+v/4}%)`;
+      ctx.fillRect(i*bw,H-v*1.4-2,bw-1,v*1.4+2);
+    }
+  }else{ // lissajous
+    ctx.strokeStyle='#37e2d5';ctx.lineWidth=2;ctx.beginPath();
+    const A=Math.min(W,H)*0.35, kx=3+Math.sin(phase*0.3)*2, ky=2;
+    for(let t=0;t<=Math.PI*2;t+=0.02){
+      const x=cx+A*Math.sin(kx*t+phase),y=cy+A*Math.sin(ky*t);
+      t===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+}
+requestAnimationFrame(loop);
+// ----- controls -----
+document.getElementById('play').onclick=function(){playing=!playing;this.classList.toggle('active',playing);this.textContent=playing?'⏸ Pause':'▶ Play';ensureAudio();if(audioCtx.state==='suspended')audioCtx.resume();lastTime=0;};
+document.getElementById('clear').onclick=()=>{pattern=Array.from({length:ROWS},()=>new Array(STEPS).fill(false));render();};
+document.getElementById('rand').onclick=()=>{for(let r=0;r<ROWS;r++)for(let c=0;c<STEPS;c++)pattern[r][c]=Math.random()<0.18;render();};
+document.getElementById('bpm').oninput=function(){document.getElementById('bpmv').textContent=this.value;};
+// seed a groove
+[[5,0],[5,4],[5,8],[5,12],[1,2],[3,6],[0,10],[2,14]].forEach(([r,c])=>pattern[r][c]=true);
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Projectile Trajectory Ballistics</title>
+<style>
+  :root{--panel:#11151f;--accent:#fb923c;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:280px 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  select{width:100%;background:#0a0e16;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-size:13px;cursor:pointer;margin-top:8px;width:100%}
+  button:hover{border-color:var(--accent)}
+  canvas{width:100%;background:#05080f;border-radius:10px;display:block}
+  .stat{font-size:12px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.8}
+  .stat b{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>🎯 Projectile Trajectory Ballistics — drag &amp; air-resistance solver</h1>
+<div class="layout">
+  <div class="panel">
+    <label>Launch angle <span id="angv">45°</span></label><input type="range" id="ang" min="1" max="89" value="45">
+    <label>Initial velocity <span id="velv">80 m/s</span></label><input type="range" id="vel" min="10" max="200" value="80">
+    <label>Mass <span id="massv">5 kg</span></label><input type="range" id="mass" min="0.5" max="50" step="0.5" value="5">
+    <label>Drag coefficient Cd <span id="cdv">0.47</span></label><input type="range" id="cd" min="0" max="1.5" step="0.01" value="0.47">
+    <label>Cross-section A <span id="areav">0.05 m²</span></label><input type="range" id="area" min="0.001" max="0.5" step="0.001" value="0.05">
+    <label>Air density ρ <span id="rhov">1.225</span></label><input type="range" id="rho" min="0" max="3" step="0.025" value="1.225">
+    <label>Wind (x) <span id="windv">0 m/s</span></label><input type="range" id="wind" min="-30" max="30" value="0">
+    <label>Gravity <span id="gv">9.81</span></label><input type="range" id="g" min="1.6" max="25" step="0.1" value="9.81">
+    <label>Launch height <span id="hv">0 m</span></label><input type="range" id="height" min="0" max="200" value="0">
+    <button id="fire">🚀 Fire!</button>
+    <button id="ghost">Toggle vacuum comparison</button>
+    <div class="stat" id="stat"></div>
+  </div>
+  <div class="panel"><canvas id="cv" height="520"></canvas></div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth;}window.addEventListener('resize',()=>{resize();compute();});
+function P(id){return +document.getElementById(id).value;}
+let showGhost=true;
+// RK4 integration of projectile with quadratic drag: m a = -0.5 ρ Cd A |v_rel| v_rel - m g ĵ
+function simulate(withDrag){
+  const ang=P('ang')*Math.PI/180,v0=P('vel'),m=P('mass'),cd=P('cd'),A=P('area'),rho=P('rho'),wind=P('wind'),g=P('g'),h0=P('height');
+  const k= withDrag? 0.5*rho*cd*A : 0;
+  let x=0,y=h0,vx=v0*Math.cos(ang),vy=v0*Math.sin(ang);
+  const dt=0.01,pts=[{x,y}];let t=0,maxH=h0;
+  function acc(vx,vy){const rvx=vx-wind,rvy=vy;const sp=Math.hypot(rvx,rvy);const fdx=-k*sp*rvx,fdy=-k*sp*rvy;return[fdx/m, fdy/m - g];}
+  while(y>=0&&t<120){
+    const[a1x,a1y]=acc(vx,vy);
+    const[a2x,a2y]=acc(vx+a1x*dt/2,vy+a1y*dt/2);
+    const[a3x,a3y]=acc(vx+a2x*dt/2,vy+a2y*dt/2);
+    const[a4x,a4y]=acc(vx+a3x*dt,vy+a3y*dt);
+    vx+=dt/6*(a1x+2*a2x+2*a3x+a4x);
+    vy+=dt/6*(a1y+2*a2y+2*a3y+a4y);
+    x+=vx*dt;y+=vy*dt;t+=dt;
+    if(y>maxH)maxH=y;
+    pts.push({x,y});
+    if(pts.length>20000)break;
+  }
+  return{pts,range:x,maxH,time:t,impactV:Math.hypot(vx,vy)};
+}
+let drag=null,vac=null;
+function compute(){
+  drag=simulate(true);vac=simulate(false);
+  draw();
+  document.getElementById('stat').innerHTML=
+   `WITH DRAG<br>range: <b>${drag.range.toFixed(1)} m</b><br>apex: <b>${drag.maxH.toFixed(1)} m</b><br>flight: <b>${drag.time.toFixed(2)} s</b><br>impact v: <b>${drag.impactV.toFixed(1)} m/s</b><br><br>VACUUM (ideal)<br>range: <b>${vac.range.toFixed(1)} m</b><br>Δrange lost: <b>${(vac.range-drag.range).toFixed(1)} m</b>`;
+}
+function draw(){
+  const W=cv.width,H=cv.height,pad=40;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  const maxX=Math.max(drag.range,vac.range,10)*1.1;
+  const maxY=Math.max(drag.maxH,vac.maxH,10)*1.15;
+  const sx=x=>pad+x/maxX*(W-pad*2);
+  const sy=y=>H-pad-y/maxY*(H-pad*2);
+  // grid
+  ctx.strokeStyle='#1a2230';ctx.fillStyle='#5a6678';ctx.font='10px monospace';ctx.lineWidth=1;
+  for(let i=0;i<=10;i++){const gx=pad+i/10*(W-pad*2);ctx.beginPath();ctx.moveTo(gx,pad);ctx.lineTo(gx,H-pad);ctx.stroke();ctx.fillText((maxX*i/10).toFixed(0),gx,H-pad+14);
+    const gy=pad+i/10*(H-pad*2);ctx.beginPath();ctx.moveTo(pad,gy);ctx.lineTo(W-pad,gy);ctx.stroke();ctx.fillText((maxY*(10-i)/10).toFixed(0),4,gy+3);}
+  ctx.fillStyle='#5a6678';ctx.fillText('horizontal distance (m)',W/2-50,H-8);
+  // vacuum ghost
+  if(showGhost){ctx.strokeStyle='#3b4a66';ctx.setLineDash([5,5]);ctx.lineWidth=1.5;ctx.beginPath();vac.pts.forEach((p,i)=>i?ctx.lineTo(sx(p.x),sy(p.y)):ctx.moveTo(sx(p.x),sy(p.y)));ctx.stroke();ctx.setLineDash([]);}
+  // drag trajectory gradient
+  ctx.lineWidth=3;ctx.beginPath();drag.pts.forEach((p,i)=>{const X=sx(p.x),Y=sy(p.y);if(i===0)ctx.moveTo(X,Y);else ctx.lineTo(X,Y);});
+  const grad=ctx.createLinearGradient(pad,0,W-pad,0);grad.addColorStop(0,'#fb923c');grad.addColorStop(1,'#f87171');ctx.strokeStyle=grad;ctx.stroke();
+  // projectile marker at apex
+  ctx.fillStyle='#fbbf24';const apex=drag.pts.reduce((m,p)=>p.y>m.y?p:m,drag.pts[0]);ctx.beginPath();ctx.arc(sx(apex.x),sy(apex.y),5,0,7);ctx.fill();
+}
+['ang','vel','mass','cd','area','rho','wind','g','height'].forEach(id=>document.getElementById(id).oninput=()=>{
+  document.getElementById('angv').textContent=P('ang')+'°';
+  document.getElementById('velv').textContent=P('vel')+' m/s';
+  document.getElementById('massv').textContent=P('mass')+' kg';
+  document.getElementById('cdv').textContent=P('cd').toFixed(2);
+  document.getElementById('areav').textContent=P('area').toFixed(3)+' m²';
+  document.getElementById('rhov').textContent=P('rho').toFixed(3);
+  document.getElementById('windv').textContent=P('wind')+' m/s';
+  document.getElementById('gv').textContent=P('g').toFixed(2);
+  document.getElementById('hv').textContent=P('height')+' m';
+  compute();});
+document.getElementById('ghost').onclick=()=>{showGhost=!showGhost;draw();};
+// animated fire
+document.getElementById('fire').onclick=()=>{
+  let i=0;const W=cv.width,H=cv.height,pad=40;
+  const maxX=Math.max(drag.range,vac.range,10)*1.1,maxY=Math.max(drag.maxH,vac.maxH,10)*1.15;
+  const sx=x=>pad+x/maxX*(W-pad*2),sy=y=>H-pad-y/maxY*(H-pad*2);
+  function anim(){draw();const p=drag.pts[Math.min(i,drag.pts.length-1)];ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx(p.x),sy(p.y),6,0,7);ctx.fill();i+=Math.max(1,drag.pts.length/120|0);if(i<drag.pts.length)requestAnimationFrame(anim);}
+  anim();
+};
+resize();compute();
+</script>
+</body>
+</html>

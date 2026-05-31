@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gravitational N-Body Simulator</title>
+<style>
+  :root{--panel:#0f1424;--accent:#fbbf24;--txt:#e6edf3;--muted:#8b94a3;--line:#243049}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#03060f;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #ui{position:fixed;top:12px;left:12px;background:rgba(15,20,36,0.92);border:1px solid var(--line);border-radius:12px;padding:14px;width:240px;z-index:10;backdrop-filter:blur(6px)}
+  h1{font-size:14px;margin-bottom:10px}
+  label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin:8px 0 3px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#192238;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px;font-size:12px;cursor:pointer;margin-top:6px;width:100%}
+  button:hover{border-color:var(--accent)}
+  .row{display:flex;gap:6px}.row button{margin-top:6px}
+  .stat{font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px;line-height:1.5}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>🪐 N-Body Gravity Sim</h1>
+  <label>Gravity G <span id="gv">1.0</span></label><input type="range" id="G" min="0.1" max="5" step="0.1" value="1">
+  <label>Time step <span id="dtv">0.40</span></label><input type="range" id="dt" min="0.05" max="1.5" step="0.05" value="0.4">
+  <label>New body mass <span id="mv">40</span></label><input type="range" id="mass" min="5" max="400" step="5" value="40">
+  <label>Trail length <span id="tlv">120</span></label><input type="range" id="trail" min="0" max="400" step="10" value="120">
+  <div class="row"><button id="presetSolar">☀ Solar</button><button id="presetBinary">⚭ Binary</button></div>
+  <div class="row"><button id="presetCluster">✦ Cluster</button><button id="clear">Clear</button></div>
+  <button id="pause">⏸ Pause</button>
+  <div class="stat" id="stat"></div>
+  <div class="stat">Click-drag to fling a new body. Velocity = drag vector.</div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W,H;function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+window.addEventListener('resize',resize);resize();
+let bodies=[],paused=false,cam={x:0,y:0,zoom:1};
+const COLORS=['#fbbf24','#60a5fa','#f87171','#34d399','#a78bfa','#fb923c','#22d3ee','#f472b6'];
+function P(id){return +document.getElementById(id).value;}
+function addBody(x,y,vx,vy,m,fixed){bodies.push({x,y,vx,vy,m,r:Math.cbrt(m)*1.6,fixed:!!fixed,c:COLORS[bodies.length%COLORS.length],trail:[]});}
+// physics: symplectic-ish leapfrog with softening
+function step(){
+  const G=P('G'),dt=P('dt'),N=bodies.length,soft=4;
+  const ax=new Float64Array(N),ay=new Float64Array(N);
+  for(let i=0;i<N;i++)for(let j=i+1;j<N;j++){
+    const dx=bodies[j].x-bodies[i].x,dy=bodies[j].y-bodies[i].y;
+    const d2=dx*dx+dy*dy+soft*soft;const d=Math.sqrt(d2);
+    const f=G/d2;const fx=f*dx/d,fy=f*dy/d;
+    ax[i]+=fx*bodies[j].m;ay[i]+=fy*bodies[j].m;
+    ax[j]-=fx*bodies[i].m;ay[j]-=fy*bodies[i].m;
+    // collision merge
+    if(d<bodies[i].r+bodies[j].r){merge(i,j);return step();}
+  }
+  for(let i=0;i<N;i++){
+    const b=bodies[i];if(b.fixed)continue;
+    b.vx+=ax[i]*dt;b.vy+=ay[i]*dt;
+    b.x+=b.vx*dt;b.y+=b.vy*dt;
+    const tl=P('trail');if(tl>0){b.trail.push({x:b.x,y:b.y});if(b.trail.length>tl)b.trail.shift();}else b.trail=[];
+  }
+}
+function merge(i,j){
+  const a=bodies[i],b=bodies[j];const m=a.m+b.m;
+  const nx=(a.x*a.m+b.x*b.m)/m,ny=(a.y*a.m+b.y*b.m)/m;
+  const nvx=(a.vx*a.m+b.vx*b.m)/m,nvy=(a.vy*a.m+b.vy*b.m)/m;
+  const keep=a.m>=b.m?a:b;
+  keep.x=nx;keep.y=ny;keep.vx=nvx;keep.vy=nvy;keep.m=m;keep.r=Math.cbrt(m)*1.6;
+  bodies.splice(bodies.indexOf(a===keep?b:a),1);
+}
+function energy(){let ke=0,pe=0;const G=P('G');for(const b of bodies)ke+=0.5*b.m*(b.vx*b.vx+b.vy*b.vy);for(let i=0;i<bodies.length;i++)for(let j=i+1;j<bodies.length;j++){const d=Math.hypot(bodies[j].x-bodies[i].x,bodies[j].y-bodies[i].y)+1;pe-=G*bodies[i].m*bodies[j].m/d;}return ke+pe;}
+function draw(){
+  ctx.fillStyle='rgba(3,6,15,0.35)';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2,H/2);ctx.scale(cam.zoom,cam.zoom);ctx.translate(-W/2+cam.x,-H/2+cam.y);
+  for(const b of bodies){
+    if(b.trail.length>1){ctx.strokeStyle=b.c+'66';ctx.lineWidth=1;ctx.beginPath();b.trail.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();}
+    const g=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.r*2);g.addColorStop(0,b.c);g.addColorStop(1,b.c+'00');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(b.x,b.y,b.r*2,0,7);ctx.fill();
+    ctx.fillStyle=b.c;ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();
+  }
+  if(drag){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(drag.x0,drag.y0);ctx.lineTo(drag.x1,drag.y1);ctx.stroke();}
+  ctx.restore();
+  document.getElementById('stat').textContent=`bodies: ${bodies.length}\nΣenergy: ${energy().toExponential(2)}`;
+}
+function loop(){requestAnimationFrame(loop);if(!paused)step();draw();}
+// interaction
+let drag=null;
+cv.addEventListener('mousedown',e=>{drag={x0:e.clientX,y0:e.clientY,x1:e.clientX,y1:e.clientY};});
+cv.addEventListener('mousemove',e=>{if(drag){drag.x1=e.clientX;drag.y1=e.clientY;}});
+window.addEventListener('mouseup',e=>{if(drag){const vx=(drag.x0-drag.x1)*0.05,vy=(drag.y0-drag.y1)*0.05;addBody(drag.x0,drag.y0,vx,vy,P('mass'));drag=null;}});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.zoom*=e.deltaY<0?1.1:0.9;},{passive:false});
+['G','dt','mass','trail'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById({G:'gv',dt:'dtv',mass:'mv',trail:'tlv'}[id]).textContent=id==='dt'?P('dt').toFixed(2):id==='G'?P('G').toFixed(1):P(id);});
+document.getElementById('pause').onclick=function(){paused=!paused;this.textContent=paused?'▶ Resume':'⏸ Pause';};
+document.getElementById('clear').onclick=()=>bodies=[];
+function orbit(cx,cy,r,m,central,dir=1){const v=Math.sqrt(P('G')*central/r)*dir;addBody(cx,cy-r,v,0,m);}
+document.getElementById('presetSolar').onclick=()=>{bodies=[];const cx=W/2,cy=H/2;addBody(cx,cy,0,0,3000,true);[60,110,170,240].forEach((r,i)=>orbit(cx,cy,r,15+i*8,3000));};
+document.getElementById('presetBinary').onclick=()=>{bodies=[];const cx=W/2,cy=H/2;addBody(cx-80,cy,0,-3,800);addBody(cx+80,cy,0,3,800);};
+document.getElementById('presetCluster').onclick=()=>{bodies=[];for(let i=0;i<40;i++){const a=Math.random()*7,r=Math.random()*220;addBody(W/2+Math.cos(a)*r,H/2+Math.sin(a)*r,Math.sin(a)*1.2,-Math.cos(a)*1.2,20+Math.random()*40);}};
+document.getElementById('presetSolar').onclick();
+loop();
+</script>
+</body>
+</html>

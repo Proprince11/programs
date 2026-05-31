@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REST API Client &amp; Mock</title>
+<style>
+  :root{--panel:#11151f;--accent:#38bdf8;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--get:#4ade80;--post:#fbbf24;--put:#a78bfa;--del:#f87171}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:12px}
+  .reqbar{display:flex;gap:8px;margin-bottom:12px}
+  select,input,button,textarea{background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:9px;font-size:13px;font-family:inherit}
+  #method{font-weight:700}
+  #url{flex:1;font-family:monospace}
+  button{background:#1a212e;cursor:pointer}button:hover{border-color:var(--accent)}
+  .send{background:var(--accent);color:#04212f;font-weight:600;padding:9px 20px}
+  .layout{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .tabs{display:flex;gap:4px;margin-bottom:10px}
+  .tabs button{padding:5px 12px;font-size:12px}
+  .tabs button.active{background:var(--accent);color:#04212f}
+  textarea{width:100%;height:160px;font-family:monospace;font-size:12px;resize:vertical}
+  pre{background:#05080f;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;overflow:auto;max-height:340px;white-space:pre-wrap}
+  .status{display:flex;gap:14px;align-items:center;margin-bottom:10px;font-family:monospace;font-size:13px}
+  .badge{padding:3px 10px;border-radius:8px;font-weight:700}
+  .s2{background:#0f2a1a;color:var(--get)}.s4{background:#2a2012;color:var(--post)}.s5{background:#2a1216;color:var(--del)}
+  .mtag{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+  .GET{background:#0f2a1a;color:var(--get)}.POST{background:#2a2412;color:var(--post)}.PUT{background:#1e1a33;color:var(--put)}.DELETE{background:#2a1216;color:var(--del)}.PATCH{background:#1a2433;color:var(--accent)}
+  .hist{font-size:12px;font-family:monospace;border-bottom:1px solid var(--line);padding:6px 0;cursor:pointer}
+  .hist:hover{color:var(--accent)}
+  label{font-size:11px;color:var(--muted)}
+  .kv{display:flex;gap:6px;margin-bottom:6px}.kv input{flex:1}
+</style>
+</head>
+<body>
+<h1>🌐 REST API Client &amp; Mock Server <span style="font-size:12px;color:var(--muted)">— in-browser fetch with mock fallback &amp; latency</span></h1>
+<div class="reqbar">
+  <select id="method"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
+  <input id="url" value="/api/users" placeholder="https://... or /api/mock-path">
+  <label style="display:flex;align-items:center;gap:4px;color:var(--muted)"><input type="checkbox" id="mock" checked style="width:auto"> mock</label>
+  <input id="latency" type="number" value="300" style="width:90px" title="latency ms">
+  <button class="send" id="send">Send ▶</button>
+</div>
+<div class="layout">
+  <div class="panel">
+    <div class="tabs">
+      <button class="tab active" data-t="body">Body</button>
+      <button class="tab" data-t="headers">Headers</button>
+      <button class="tab" data-t="mockcfg">Mock Routes</button>
+      <button class="tab" data-t="history">History</button>
+    </div>
+    <div id="tab-body"><label>Request JSON body</label><textarea id="body">{
+  "name": "New User",
+  "email": "new@example.com"
+}</textarea></div>
+    <div id="tab-headers" style="display:none"><label>Custom headers</label><div id="headers"></div><button id="addHeader">+ add header</button></div>
+    <div id="tab-mockcfg" style="display:none"><label>Mock endpoints (auto-respond)</label><pre id="mockList"></pre></div>
+    <div id="tab-history" style="display:none"><div id="historyList"></div></div>
+  </div>
+  <div class="panel">
+    <div class="status" id="status"><span style="color:var(--muted)">No request sent yet</span></div>
+    <pre id="response">// response will appear here</pre>
+    <label>Response headers</label>
+    <pre id="resHeaders" style="max-height:120px">—</pre>
+  </div>
+</div>
+<script>
+"use strict";
+// ---- mock DB ----
+let DB={users:[{id:1,name:'Ada Lovelace',email:'ada@example.com'},{id:2,name:'Alan Turing',email:'alan@example.com'}]};
+const ROUTES={
+  'GET /api/users':()=>({status:200,body:DB.users}),
+  'GET /api/users/:id':(p)=>{const u=DB.users.find(u=>u.id==p.id);return u?{status:200,body:u}:{status:404,body:{error:'not found'}};},
+  'POST /api/users':(p,b)=>{const u={id:DB.users.length+1,...b};DB.users.push(u);return{status:201,body:u};},
+  'PUT /api/users/:id':(p,b)=>{const u=DB.users.find(u=>u.id==p.id);if(!u)return{status:404,body:{error:'not found'}};Object.assign(u,b);return{status:200,body:u};},
+  'DELETE /api/users/:id':(p)=>{const i=DB.users.findIndex(u=>u.id==p.id);if(i<0)return{status:404,body:{error:'not found'}};const[r]=DB.users.splice(i,1);return{status:200,body:{deleted:r}};},
+  'GET /api/health':()=>({status:200,body:{status:'ok',uptime:Math.floor(performance.now()/1000)+'s'}})
+};
+function matchRoute(method,path){
+  for(const key in ROUTES){
+    const[m,pattern]=key.split(' ');if(m!==method)continue;
+    const pp=pattern.split('/'),sp=path.split('?')[0].split('/');
+    if(pp.length!==sp.length)continue;
+    const params={};let ok=true;
+    for(let i=0;i<pp.length;i++){if(pp[i].startsWith(':'))params[pp[i].slice(1)]=sp[i];else if(pp[i]!==sp[i]){ok=false;break;}}
+    if(ok)return{handler:ROUTES[key],params};
+  }
+  return null;
+}
+document.getElementById('mockList').textContent=Object.keys(ROUTES).join('\n');
+// headers UI
+let history=[];
+function addHeaderRow(k='',v=''){const d=document.createElement('div');d.className='kv';d.innerHTML=`<input placeholder="Header" value="${k}"><input placeholder="Value" value="${v}"><button>✕</button>`;d.querySelector('button').onclick=()=>d.remove();document.getElementById('headers').appendChild(d);}
+addHeaderRow('Content-Type','application/json');addHeaderRow('Authorization','Bearer demo-token');
+document.getElementById('addHeader').onclick=()=>addHeaderRow();
+function getHeaders(){const out={};document.querySelectorAll('#headers .kv').forEach(r=>{const[k,v]=r.querySelectorAll('input');if(k.value)out[k.value]=v.value;});return out;}
+// tabs
+document.querySelectorAll('.tab').forEach(t=>t.onclick=function(){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));this.classList.add('active');['body','headers','mockcfg','history'].forEach(id=>document.getElementById('tab-'+id).style.display='none');document.getElementById('tab-'+this.dataset.t).style.display='block';});
+// send
+async function send(){
+  const method=document.getElementById('method').value;
+  const url=document.getElementById('url').value;
+  const useMock=document.getElementById('mock').checked;
+  const latency=+document.getElementById('latency').value||0;
+  const headers=getHeaders();
+  let body=null;
+  if(['POST','PUT','PATCH'].includes(method)){try{body=JSON.parse(document.getElementById('body').value||'{}');}catch(e){show(400,{error:'Invalid JSON body: '+e.message},{},0);return;}}
+  const t0=performance.now();
+  document.getElementById('status').innerHTML='<span style="color:var(--accent)">⏳ sending…</span>';
+  if(useMock){
+    await new Promise(r=>setTimeout(r,latency));
+    const route=matchRoute(method,url);
+    const elapsed=Math.round(performance.now()-t0);
+    if(route){const res=route.handler(route.params,body);show(res.status,res.body,{'x-mock':'true','x-response-time':elapsed+'ms','content-type':'application/json'},elapsed);}
+    else show(404,{error:`No mock route for ${method} ${url}`,hint:'See Mock Routes tab'},{'x-mock':'true'},elapsed);
+  }else{
+    try{
+      const opts={method,headers};if(body)opts.body=JSON.stringify(body);
+      const res=await fetch(url,opts);const elapsed=Math.round(performance.now()-t0);
+      const text=await res.text();let parsed;try{parsed=JSON.parse(text);}catch{parsed=text;}
+      const rh={};res.headers.forEach((v,k)=>rh[k]=v);show(res.status,parsed,rh,elapsed);
+    }catch(e){show(0,{error:'Network/CORS error: '+e.message},{},Math.round(performance.now()-t0));}
+  }
+  history.unshift({method,url,time:new Date().toLocaleTimeString()});renderHistory();
+}
+function show(status,body,headers,ms){
+  const cls=status>=200&&status<300?'s2':status>=400&&status<500?'s4':status>=500?'s5':'s4';
+  const txt={200:'OK',201:'Created',204:'No Content',400:'Bad Request',404:'Not Found',500:'Server Error',0:'No Response'}[status]||'';
+  document.getElementById('status').innerHTML=`<span class="badge ${cls}">${status} ${txt}</span><span style="color:var(--muted)">${ms} ms</span>`;
+  document.getElementById('response').textContent=typeof body==='string'?body:JSON.stringify(body,null,2);
+  document.getElementById('resHeaders').textContent=Object.entries(headers).map(([k,v])=>`${k}: ${v}`).join('\n')||'—';
+}
+function renderHistory(){document.getElementById('historyList').innerHTML=history.slice(0,30).map((h,i)=>`<div class="hist" data-i="${i}"><span class="mtag ${h.method}">${h.method}</span> ${h.url} <span style="color:var(--muted)">${h.time}</span></div>`).join('');document.querySelectorAll('.hist').forEach(el=>el.onclick=()=>{const h=history[+el.dataset.i];document.getElementById('method').value=h.method;document.getElementById('url').value=h.url;});}
+document.getElementById('send').onclick=send;
+document.getElementById('url').addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+</script>
+</body>
+</html>

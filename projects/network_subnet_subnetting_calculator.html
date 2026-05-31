@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subnet / CIDR Calculator</title>
+<style>
+  :root{--panel:#11151f;--accent:#38bdf8;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--net:#4ade80;--host:#fbbf24}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:920px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .cidrbar{display:flex;gap:8px;align-items:center;font-family:monospace;font-size:20px}
+  input{background:#05080f;border:1px solid var(--line);color:var(--accent);border-radius:8px;padding:10px;font-family:monospace;font-size:18px;text-align:center}
+  #ip{flex:1}#cidr{width:80px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .stat{background:#05080f;border:1px solid var(--line);border-radius:10px;padding:10px}
+  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase}
+  .stat .v{font-size:16px;font-family:monospace;color:var(--txt);margin-top:2px;word-break:break-all}
+  .bits{font-family:monospace;font-size:15px;letter-spacing:2px;word-break:break-all;line-height:1.8;text-align:center}
+  .bits .net{color:var(--net)}.bits .host{color:var(--host)}.bits .oct{opacity:.4}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+  td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left}
+  th{color:var(--muted)}
+  .err{color:#f87171}
+</style>
+</head>
+<body>
+<h1>🌐 Subnet / CIDR Calculator</h1>
+<div class="panel">
+  <div class="cidrbar"><input id="ip" value="192.168.10.130"><span>/</span><input id="cidr" value="26" type="number" min="0" max="32"></div>
+  <input type="range" id="cidrRange" min="0" max="32" value="26" style="margin-top:12px">
+  <div id="err" class="err" style="min-height:16px;margin-top:6px"></div>
+</div>
+<div class="panel">
+  <h2>Binary breakdown (network / host)</h2>
+  <div class="bits" id="bits"></div>
+</div>
+<div class="panel">
+  <h2>Subnet details</h2>
+  <div class="grid" id="details"></div>
+</div>
+<div class="panel">
+  <h2>Subnet division — split into smaller blocks</h2>
+  <label style="font-size:12px;color:var(--muted)">Divide into /<input id="splitCidr" type="number" value="28" min="0" max="32" style="width:60px;font-size:14px;padding:4px"> blocks</label>
+  <table id="splitTable" style="margin-top:10px"></table>
+</div>
+<script>
+"use strict";
+function ipToInt(ip){const p=ip.split('.');if(p.length!==4)throw new Error('IPv4 needs 4 octets');return p.reduce((a,o)=>{const n=+o;if(isNaN(n)||n<0||n>255)throw new Error('octet out of range: '+o);return (a<<8|n)>>>0;},0);}
+function intToIp(n){return[n>>>24&255,n>>>16&255,n>>>8&255,n&255].join('.');}
+function maskOf(cidr){return cidr===0?0:(0xFFFFFFFF<<(32-cidr))>>>0;}
+function calc(){
+  const ipStr=document.getElementById('ip').value.trim();
+  const cidr=+document.getElementById('cidr').value;
+  const err=document.getElementById('err');err.textContent='';
+  let ip;try{ip=ipToInt(ipStr);}catch(e){err.textContent='⚠ '+e.message;return;}
+  if(cidr<0||cidr>32){err.textContent='⚠ CIDR must be 0–32';return;}
+  const mask=maskOf(cidr);
+  const network=(ip&mask)>>>0;
+  const broadcast=(network|(~mask>>>0))>>>0;
+  const hostBits=32-cidr;
+  const totalHosts=Math.pow(2,hostBits);
+  const usable=hostBits<=1?totalHosts:totalHosts-2;
+  const firstHost=hostBits<=1?network:(network+1)>>>0;
+  const lastHost=hostBits<=1?broadcast:(broadcast-1)>>>0;
+  // class & type
+  const o1=ip>>>24;let cls=o1<128?'A':o1<192?'B':o1<224?'C':o1<240?'D (multicast)':'E (reserved)';
+  const isPrivate=(o1===10)||(o1===172&&((ip>>>16&255)>=16&&(ip>>>16&255)<=31))||(o1===192&&(ip>>>16&255)===168);
+  // bits view
+  const ipBin=(ip>>>0).toString(2).padStart(32,'0');
+  let bitsHtml='';
+  for(let i=0;i<32;i++){const cls2=i<cidr?'net':'host';bitsHtml+=`<span class="${cls2}">${ipBin[i]}</span>`;if((i+1)%8===0&&i<31)bitsHtml+='<span class="oct"> . </span>';}
+  document.getElementById('bits').innerHTML=bitsHtml;
+  const d=document.getElementById('details');
+  function stat(l,v){return `<div class="stat"><div class="l">${l}</div><div class="v">${v}</div></div>`;}
+  d.innerHTML=
+    stat('Network address',intToIp(network)+' /'+cidr)+
+    stat('Broadcast address',intToIp(broadcast))+
+    stat('Subnet mask',intToIp(mask))+
+    stat('Wildcard mask',intToIp(~mask>>>0))+
+    stat('First usable host',hostBits<=1?'—':intToIp(firstHost))+
+    stat('Last usable host',hostBits<=1?'—':intToIp(lastHost))+
+    stat('Total addresses',totalHosts.toLocaleString())+
+    stat('Usable hosts',usable.toLocaleString())+
+    stat('IP class',cls)+
+    stat('Type',isPrivate?'Private (RFC1918)':'Public');
+  // split
+  splitSubnets(network,cidr);
+}
+function splitSubnets(network,cidr){
+  const target=+document.getElementById('splitCidr').value;
+  const t=document.getElementById('splitTable');
+  if(target<cidr||target>32){t.innerHTML='<tr><td class="err">target prefix must be ≥ current /'+cidr+'</td></tr>';return;}
+  const count=Math.pow(2,target-cidr);const blockSize=Math.pow(2,32-target);
+  let rows='<tr><th>#</th><th>Network</th><th>Range</th><th>Broadcast</th><th>Hosts</th></tr>';
+  const max=Math.min(count,256);
+  for(let i=0;i<max;i++){
+    const net=(network+i*blockSize)>>>0;const bc=(net+blockSize-1)>>>0;
+    const usable=blockSize<=2?blockSize:blockSize-2;
+    rows+=`<tr><td>${i+1}</td><td style="color:var(--net)">${intToIp(net)}/${target}</td><td>${blockSize<=2?'—':intToIp((net+1)>>>0)+' – '+intToIp((bc-1)>>>0)}</td><td>${intToIp(bc)}</td><td>${usable.toLocaleString()}</td></tr>`;
+  }
+  if(count>256)rows+=`<tr><td colspan="5" style="color:var(--muted)">… ${(count-256).toLocaleString()} more blocks</td></tr>`;
+  t.innerHTML=rows;
+}
+['ip','cidr','splitCidr'].forEach(id=>document.getElementById(id).oninput=()=>{if(id==='cidr')document.getElementById('cidrRange').value=document.getElementById('cidr').value;calc();});
+document.getElementById('cidrRange').oninput=function(){document.getElementById('cidr').value=this.value;calc();};
+calc();
+</script>
+</body>
+</html>

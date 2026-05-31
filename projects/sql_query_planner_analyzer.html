@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Query Planner Analyzer</title>
+<style>
+  :root{--panel:#11151f;--accent:#38bdf8;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--scan:#f87171;--idx:#4ade80}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1150px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  textarea{width:100%;height:120px;background:#05080f;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:monospace;font-size:13px;color:#9ae6b4;resize:vertical}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 14px;cursor:pointer;font-size:13px;margin:8px 4px 0 0}
+  button:hover{border-color:var(--accent)}
+  button.active{background:var(--accent);color:#04212f}
+  .indexes{margin-top:8px}
+  .ix{display:flex;align-items:center;gap:8px;padding:6px 0;font-family:monospace;font-size:13px;border-bottom:1px solid var(--line)}
+  .ix .col{color:var(--accent)}
+  .plan{font-family:monospace;font-size:13px;line-height:1.8}
+  .node{padding:8px 12px;border-radius:8px;margin:6px 0;border-left:4px solid}
+  .node.scan{border-color:var(--scan);background:#1f1214}
+  .node.index{border-color:var(--idx);background:#0f2018}
+  .node.join{border-color:#a78bfa;background:#191428}
+  .node.agg{border-color:#fbbf24;background:#231e10}
+  .cost{float:right;color:var(--muted)}
+  .bar{height:8px;border-radius:4px;background:#1a212e;margin-top:4px;overflow:hidden}
+  .bar>div{height:100%}
+  .verdict{padding:12px;border-radius:8px;margin-top:10px;font-size:13px;line-height:1.6}
+  .stats{font-size:12px;color:var(--muted);font-family:monospace;margin-top:10px;line-height:1.7}
+</style>
+</head>
+<body>
+<h1>🗄️ SQL Query Planner Analyzer <span style="font-size:12px;color:var(--muted)">— index impact on scan paths</span></h1>
+<div class="layout">
+  <div class="panel">
+    <h2>Query</h2>
+    <textarea id="sql">SELECT u.name, o.total
+FROM users u
+JOIN orders o ON o.user_id = u.id
+WHERE u.country = 'US' AND o.status = 'paid'
+ORDER BY o.created_at DESC
+LIMIT 20;</textarea>
+    <h2 style="margin-top:14px">Available indexes (toggle)</h2>
+    <div class="indexes" id="indexes"></div>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div class="panel">
+    <h2>Estimated execution plan</h2>
+    <div class="plan" id="plan"></div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+</div>
+<script>
+"use strict";
+// table statistics (simulated catalog)
+const TABLES={users:{rows:1000000,cols:{id:'pk',country:'low-card',name:'text',email:'unique'}},orders:{rows:5000000,cols:{id:'pk',user_id:'fk',status:'low-card',total:'num',created_at:'date'}}};
+let indexes=[
+  {name:'idx_users_country',table:'users',col:'country',on:false,selectivity:0.04},
+  {name:'pk_users_id',table:'users',col:'id',on:true,selectivity:0.000001},
+  {name:'idx_orders_user_id',table:'orders',col:'user_id',on:false,selectivity:0.0001},
+  {name:'idx_orders_status',table:'orders',col:'status',on:false,selectivity:0.25},
+  {name:'idx_orders_created',table:'orders',col:'created_at',on:false,selectivity:0.00001},
+];
+function renderIndexes(){
+  document.getElementById('indexes').innerHTML=indexes.map((ix,i)=>
+    `<div class="ix"><input type="checkbox" ${ix.on?'checked':''} data-i="${i}"> <span class="col">${ix.name}</span> <span style="color:var(--muted)">ON ${ix.table}(${ix.col})</span></div>`).join('');
+  document.querySelectorAll('.ix input').forEach(c=>c.onchange=()=>{indexes[+c.dataset.i].on=c.checked;analyze();});
+}
+function analyze(){
+  const sql=document.getElementById('sql').value.toLowerCase();
+  const plan=document.getElementById('plan');
+  let nodes=[],totalCost=0;
+  // detect WHERE columns
+  function hasIndex(table,col){return indexes.find(ix=>ix.on&&ix.table===table&&ix.col===col);}
+  function rowsOf(t){return TABLES[t]?TABLES[t].rows:1000;}
+  // users access
+  const usersWhere=/u\.country|users\.country|country\s*=/.test(sql);
+  const uIdx=hasIndex('users','country');
+  let uRows=rowsOf('users');
+  if(usersWhere){
+    if(uIdx){const out=Math.ceil(uRows*uIdx.selectivity);nodes.push({type:'index',label:`Index Range Scan · users via ${uIdx.name}`,cost:Math.ceil(Math.log2(uRows)*3+out),rows:out});uRows=out;}
+    else{nodes.push({type:'scan',label:'Seq Scan · users (filter: country)',cost:uRows,rows:Math.ceil(uRows*0.04)});uRows=Math.ceil(uRows*0.04);}
+  }else{nodes.push({type:'scan',label:'Seq Scan · users (full)',cost:rowsOf('users'),rows:rowsOf('users')});}
+  // join
+  const joinIdx=hasIndex('orders','user_id');
+  if(/join\s+orders/.test(sql)){
+    if(joinIdx){nodes.push({type:'index',label:`Nested Loop Join · orders via ${joinIdx.name}`,cost:Math.ceil(uRows*Math.log2(rowsOf('orders'))*1.5),rows:uRows*5});}
+    else{nodes.push({type:'join',label:'Hash Join · orders (build full table)',cost:rowsOf('orders')+uRows,rows:uRows*5});}
+  }
+  // status filter
+  if(/status\s*=/.test(sql)){const sIdx=hasIndex('orders','status');nodes.push({type:sIdx?'index':'scan',label:sIdx?`Bitmap Filter · status (${sIdx.name})`:'Filter · status (low selectivity, index rarely helps)',cost:sIdx?2000:8000,rows:0});}
+  // order by
+  if(/order\s+by/.test(sql)){const cIdx=hasIndex('orders','created_at');nodes.push({type:cIdx?'index':'agg',label:cIdx?'Index Scan ordered · created_at (no sort needed)':'Sort · created_at DESC (in-memory/external)',cost:cIdx?500:uRows>0?Math.ceil(uRows*5*Math.log2(uRows*5+2)):50000,rows:0});}
+  if(/limit/.test(sql))nodes.push({type:'agg',label:'Limit',cost:20,rows:20});
+  totalCost=nodes.reduce((s,n)=>s+n.cost,0);
+  const maxCost=Math.max(...nodes.map(n=>n.cost),1);
+  plan.innerHTML=nodes.map(n=>{const pct=(n.cost/maxCost*100).toFixed(0);const col=n.type==='scan'?'#f87171':n.type==='index'?'#4ade80':n.type==='join'?'#a78bfa':'#fbbf24';return `<div class="node ${n.type}">${n.label}<span class="cost">cost ${n.cost.toLocaleString()}</span><div class="bar"><div style="width:${pct}%;background:${col}"></div></div></div>`;}).join('');
+  // verdict
+  const scans=nodes.filter(n=>n.type==='scan').length;
+  const v=document.getElementById('verdict');
+  if(scans===0){v.style.background='#0f2a1a';v.style.color='#4ade80';v.innerHTML='✓ <b>Fully index-optimized.</b> All access paths use indexes. Total estimated cost: '+totalCost.toLocaleString()+' units.';}
+  else{v.style.background='#2a1216';v.style.color='#f87171';v.innerHTML=`⚠ <b>${scans} sequential scan${scans>1?'s':''} detected.</b> Enabling matching indexes can cut cost from ${totalCost.toLocaleString()} units. Add an index on filtered/join columns highlighted in red.`;}
+  document.getElementById('stats').innerHTML=`catalog:\nusers: ${TABLES.users.rows.toLocaleString()} rows\norders: ${TABLES.orders.rows.toLocaleString()} rows\nactive indexes: ${indexes.filter(i=>i.on).length}\nestimated total cost: ${totalCost.toLocaleString()}`;
+}
+document.getElementById('sql').oninput=analyze;
+renderIndexes();analyze();
+</script>
+</body>
+</html>

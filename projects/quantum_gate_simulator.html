@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quantum Gate Simulator</title>
+<style>
+  :root{--panel:#10141f;--accent:#8b5cf6;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3c}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#06080f;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:19px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 360px;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  canvas{display:block;margin:0 auto}
+  .gates{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .gates button{background:#1c2233;border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;cursor:pointer;font-family:monospace;font-weight:700}
+  .gates button:hover{border-color:var(--accent);color:var(--accent)}
+  .circuit{font-family:monospace;font-size:13px;background:#0a0e16;border-radius:8px;padding:10px;min-height:40px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .gtag{background:var(--accent);color:#fff;border-radius:5px;padding:2px 8px}
+  .state{font-family:monospace;font-size:13px;line-height:1.9}
+  .bar{height:14px;background:#1c2233;border-radius:4px;overflow:hidden;display:inline-block;width:120px;vertical-align:middle}
+  .bar>div{height:100%;background:linear-gradient(90deg,#8b5cf6,#22d3ee)}
+  button.act{background:#1c2233;border:1px solid var(--line);color:var(--txt);padding:7px 12px;border-radius:8px;cursor:pointer;margin-top:8px}
+  button.act:hover{border-color:var(--accent)}
+  label{font-size:12px;color:var(--muted)}
+  .qsel{display:flex;gap:8px;margin:8px 0}
+  .qsel button{padding:5px 10px}
+  .qsel button.active{background:var(--accent);color:#fff}
+  h3{font-size:13px;color:var(--muted);margin:14px 0 6px;text-transform:uppercase;letter-spacing:1px}
+</style>
+</head>
+<body>
+<h1>⚛️ Quantum Gate Simulator — Bloch Sphere + State Vector</h1>
+<div class="layout">
+  <div class="panel">
+    <h3>Single-qubit Bloch sphere</h3>
+    <canvas id="bloch" width="340" height="340"></canvas>
+    <div class="qsel">
+      <label>Apply gates to qubit:</label>
+      <button data-q="0" class="active">q0</button>
+      <button data-q="1">q1</button>
+    </div>
+    <div class="gates" id="gates"></div>
+    <h3>Circuit</h3>
+    <div class="circuit" id="circuit"><span style="color:var(--muted)">empty — add gates</span></div>
+    <button class="act" id="reset">Reset to |00⟩</button>
+    <button class="act" id="measure">Measure (collapse)</button>
+  </div>
+  <div class="panel">
+    <h3>2-Qubit state vector (amplitudes)</h3>
+    <div class="state" id="amps"></div>
+    <h3>Measurement probabilities</h3>
+    <div class="state" id="probs"></div>
+    <h3>Notes</h3>
+    <p style="font-size:12px;color:var(--muted);line-height:1.6">Complex amplitudes are tracked for the full 4-dimensional 2-qubit Hilbert space. H creates superposition, CNOT entangles qubits (control q0 → target q1). The Bloch sphere shows q0's reduced state when it is separable.</p>
+  </div>
+</div>
+<script>
+"use strict";
+// complex helpers
+const C=(re,im=0)=>({re,im});
+const cadd=(a,b)=>C(a.re+b.re,a.im+b.im);
+const cmul=(a,b)=>C(a.re*b.re-a.im*b.im,a.re*b.im+a.im*b.re);
+const cabs2=a=>a.re*a.re+a.im*a.im;
+// 2-qubit state: index = q0*2 + q1 ... use bit0=q1, bit1=q0
+let state=[C(1),C(0),C(0),C(0)]; // |00>
+let circuit=[];
+let activeQ=0;
+const S=1/Math.sqrt(2);
+const GATES={
+  H:[[C(S),C(S)],[C(S),C(-S)]],
+  X:[[C(0),C(1)],[C(1),C(0)]],
+  Y:[[C(0),C(0,-1)],[C(0,1),C(0)]],
+  Z:[[C(1),C(0)],[C(0),C(-1)]],
+  S:[[C(1),C(0)],[C(0),C(0,1)]],
+  T:[[C(1),C(0)],[C(0),C(Math.cos(Math.PI/4),Math.sin(Math.PI/4))]]
+};
+function applySingle(mat,target){
+  // target: 0 => q0 (bit1), 1 => q1 (bit0)
+  const bit=target===0?2:1; // value to test high bit
+  const out=state.map(()=>C(0));
+  for(let i=0;i<4;i++){
+    const isOne=(target===0)?(i&2)?1:0:(i&1)?1:0;
+    const pair= isOne? i-bit : i+bit;
+    // amplitude of basis i gets contributions
+  }
+  // cleaner: iterate over basis grouping
+  const res=[C(0),C(0),C(0),C(0)];
+  for(let i=0;i<4;i++){
+    const bitVal=(target===0)?((i>>1)&1):(i&1);
+    const i0=bitVal===0?i:i-bit;const i1=bitVal===0?i+bit:i;
+    // amplitude at index i = sum over old basis
+  }
+  // Direct approach: for each computational pair (b=0,b=1) on the target qubit
+  const newState=[C(0),C(0),C(0),C(0)];
+  for(let i=0;i<4;i++){
+    const tb=(target===0)?((i>>1)&1):(i&1);
+    if(tb===0){
+      const j=i+bit; // partner with target=1
+      // |i> with target 0
+      newState[i]=cadd(newState[i],cmul(mat[0][0],state[i]));
+      newState[i]=cadd(newState[i],cmul(mat[0][1],state[j]));
+      newState[j]=cadd(newState[j],cmul(mat[1][0],state[i]));
+      newState[j]=cadd(newState[j],cmul(mat[1][1],state[j]));
+    }
+  }
+  state=newState;
+}
+function applyCNOT(){ // control q0 (bit1), target q1 (bit0)
+  const ns=state.slice();
+  // swap amplitudes where control=1: indices 2(|10>) and 3(|11>)
+  [ns[2],ns[3]]=[state[3],state[2]];
+  state=ns;
+}
+const BASIS=['|00⟩','|01⟩','|10⟩','|11⟩'];
+function render(){
+  // amplitudes
+  let html='';for(let i=0;i<4;i++){const a=state[i];html+=`${BASIS[i]} : ${a.re.toFixed(3)}${a.im>=0?'+':''}${a.im.toFixed(3)}i<br>`;}
+  document.getElementById('amps').innerHTML=html;
+  let ph='';for(let i=0;i<4;i++){const p=cabs2(state[i]);ph+=`${BASIS[i]} <span class="bar"><div style="width:${(p*100).toFixed(1)}%"></div></span> ${(p*100).toFixed(1)}%<br>`;}
+  document.getElementById('probs').innerHTML=ph;
+  // circuit
+  const cEl=document.getElementById('circuit');
+  cEl.innerHTML=circuit.length?circuit.map(g=>`<span class="gtag">${g}</span>`).join(''):'<span style="color:var(--muted)">empty — add gates</span>';
+  drawBloch();
+}
+// Bloch for q0 (reduced): compute reduced density matrix
+function blochVector(){
+  // reduced density matrix of q0 by tracing out q1
+  // rho_q0 = sum over q1 basis
+  // amplitudes: index i = (q0 bit1)(q1 bit0)
+  let r00=C(0),r01=C(0),r10=C(0),r11=C(0);
+  for(let q1=0;q1<2;q1++){
+    const a0=state[(0<<1)|q1]; // q0=0
+    const a1=state[(1<<1)|q1]; // q0=1
+    r00=cadd(r00,C(cabs2(a0)));
+    r11=cadd(r11,C(cabs2(a1)));
+    r01=cadd(r01,cmul(a0,C(a1.re,-a1.im)));
+    r10=cadd(r10,cmul(a1,C(a0.re,-a0.im)));
+  }
+  const x=2*r01.re; // Re(rho01)*2
+  const y=2*r01.im*-1; // -2 Im
+  const z=r00.re-r11.re;
+  return[x,y,z];
+}
+const bcv=document.getElementById('bloch'),bx=bcv.getContext('2d');
+function drawBloch(){
+  const W=340,H=340,cx=170,cy=170,R=120;
+  bx.clearRect(0,0,W,H);
+  // sphere outline
+  bx.strokeStyle='#2a3145';bx.lineWidth=1;
+  bx.beginPath();bx.arc(cx,cy,R,0,7);bx.stroke();
+  bx.beginPath();bx.ellipse(cx,cy,R,R*0.34,0,0,7);bx.stroke();
+  bx.beginPath();bx.ellipse(cx,cy,R*0.34,R,0,0,7);bx.stroke();
+  // axes
+  bx.strokeStyle='#3a4255';bx.beginPath();bx.moveTo(cx-R,cy);bx.lineTo(cx+R,cy);bx.moveTo(cx,cy-R);bx.lineTo(cx,cy+R);bx.stroke();
+  bx.fillStyle='#8b94a3';bx.font='12px monospace';bx.fillText('|0⟩',cx-8,cy-R-6);bx.fillText('|1⟩',cx-8,cy+R+16);bx.fillText('+x',cx+R+4,cy+4);
+  // vector (project x toward bottom-right, y to right, z up)
+  const[vx,vy,vz]=blochVector();
+  const px=cx+ (vy*R) + (vx*R*0.5*0.34);
+  const py=cy - (vz*R) + (vx*R*0.5*0.34);
+  bx.strokeStyle='#8b5cf6';bx.lineWidth=3;bx.beginPath();bx.moveTo(cx,cy);bx.lineTo(px,py);bx.stroke();
+  bx.fillStyle='#22d3ee';bx.beginPath();bx.arc(px,py,6,0,7);bx.fill();
+  const purity=vx*vx+vy*vy+vz*vz;
+  bx.fillStyle=purity<0.95?'#fbbf24':'#4ade80';bx.fillText(purity<0.95?'mixed (entangled)':'pure',cx-30,cy+R+34);
+}
+// build gate buttons
+const gatesEl=document.getElementById('gates');
+['H','X','Y','Z','S','T'].forEach(g=>{const b=document.createElement('button');b.textContent=g;b.onclick=()=>{applySingle(GATES[g],activeQ);circuit.push(`${g}${activeQ}`);render();};gatesEl.appendChild(b);});
+const cnot=document.createElement('button');cnot.textContent='CNOT';cnot.onclick=()=>{applyCNOT();circuit.push('CX');render();};gatesEl.appendChild(cnot);
+document.querySelectorAll('.qsel button[data-q]').forEach(b=>b.onclick=function(){activeQ=+this.dataset.q;document.querySelectorAll('.qsel button[data-q]').forEach(x=>x.classList.remove('active'));this.classList.add('active');});
+document.getElementById('reset').onclick=()=>{state=[C(1),C(0),C(0),C(0)];circuit=[];render();};
+document.getElementById('measure').onclick=()=>{const p=state.map(cabs2);let r=Math.random(),acc=0,outcome=0;for(let i=0;i<4;i++){acc+=p[i];if(r<=acc){outcome=i;break;}}state=[C(0),C(0),C(0),C(0)];state[outcome]=C(1);circuit.push('M→'+BASIS[outcome]);render();};
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Base64 / Binary / Hex Stream Converter</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;justify-content:space-between}
+  textarea{width:100%;height:90px;background:#05080f;border:1px solid var(--line);border-radius:8px;padding:12px;font-family:'SF Mono',monospace;font-size:13px;color:var(--txt);resize:vertical;line-height:1.5;word-break:break-all}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  label{font-size:12px;color:var(--muted)}
+  input[type=file]{font-size:12px}
+  .stats{font-family:monospace;font-size:12px;color:var(--muted)}
+  .err{color:#f87171;font-size:12px;margin-top:4px;min-height:14px}
+</style>
+</head>
+<body>
+<h1>🔄 Base64 / Binary / Hex Stream Converter <span style="font-size:12px;color:var(--muted)">— live multi-format transcoder</span></h1>
+<div class="panel">
+  <div class="row">
+    <label>Load file: <input type="file" id="file"></label>
+    <button id="clear">Clear</button>
+    <span class="stats" id="bytecount">0 bytes</span>
+  </div>
+</div>
+<div class="panel">
+  <h2>Text (UTF-8) <button data-fmt="text" class="copy">copy</button></h2>
+  <textarea id="text" spellcheck="false">Hello, 世界! 🌍</textarea>
+  <div class="err" id="err-text"></div>
+</div>
+<div class="panel">
+  <h2>Base64 <button data-fmt="b64" class="copy">copy</button></h2>
+  <textarea id="b64" spellcheck="false"></textarea>
+  <div class="err" id="err-b64"></div>
+</div>
+<div class="panel">
+  <h2>Hex <button data-fmt="hex" class="copy">copy</button> <label style="font-size:11px"><input type="checkbox" id="hexSpace" checked> space-separate</label></h2>
+  <textarea id="hex" spellcheck="false"></textarea>
+  <div class="err" id="err-hex"></div>
+</div>
+<div class="panel">
+  <h2>Binary <button data-fmt="bin" class="copy">copy</button></h2>
+  <textarea id="bin" spellcheck="false"></textarea>
+  <div class="err" id="err-bin"></div>
+</div>
+<div class="panel">
+  <h2>Decimal byte array</h2>
+  <textarea id="dec" spellcheck="false" style="height:60px"></textarea>
+</div>
+<script>
+"use strict";
+// canonical state: Uint8Array
+let bytes=new Uint8Array();
+const enc=new TextEncoder(),dec=new TextDecoder('utf-8',{fatal:false});
+function clearErr(){['text','b64','hex','bin'].forEach(id=>document.getElementById('err-'+id).textContent='');}
+function setBytes(b,except){bytes=b;render(except);}
+function render(except){
+  document.getElementById('bytecount').textContent=bytes.length+' bytes';
+  if(except!=='text')document.getElementById('text').value=dec.decode(bytes);
+  if(except!=='b64'){let bin='';bytes.forEach(x=>bin+=String.fromCharCode(x));document.getElementById('b64').value=btoa(bin);}
+  if(except!=='hex'){const sp=document.getElementById('hexSpace').checked?' ':'';document.getElementById('hex').value=[...bytes].map(x=>x.toString(16).padStart(2,'0')).join(sp);}
+  if(except!=='bin')document.getElementById('bin').value=[...bytes].map(x=>x.toString(2).padStart(8,'0')).join(' ');
+  document.getElementById('dec').value=[...bytes].join(', ');
+}
+function tryParse(fn,errId,except){clearErr();try{const b=fn();setBytes(b,except);}catch(e){document.getElementById('err-'+errId).textContent='⚠ '+e.message;}}
+document.getElementById('text').oninput=()=>tryParse(()=>enc.encode(document.getElementById('text').value),'text','text');
+document.getElementById('b64').oninput=()=>tryParse(()=>{const s=document.getElementById('b64').value.replace(/\s/g,'');const bin=atob(s);const b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b;},'b64','b64');
+document.getElementById('hex').oninput=()=>tryParse(()=>{const s=document.getElementById('hex').value.replace(/0x/g,'').replace(/[\s,]/g,'');if(s.length%2)throw new Error('hex needs even number of digits');if(/[^0-9a-fA-F]/.test(s))throw new Error('invalid hex char');const b=new Uint8Array(s.length/2);for(let i=0;i<b.length;i++)b[i]=parseInt(s.substr(i*2,2),16);return b;},'hex','hex');
+document.getElementById('bin').oninput=()=>tryParse(()=>{const s=document.getElementById('bin').value.replace(/[\s,]/g,'');if(s.length%8)throw new Error('binary length must be multiple of 8');if(/[^01]/.test(s))throw new Error('invalid binary digit');const b=new Uint8Array(s.length/8);for(let i=0;i<b.length;i++)b[i]=parseInt(s.substr(i*8,8),2);return b;},'bin','bin');
+document.getElementById('hexSpace').onchange=()=>render('');
+document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{setBytes(new Uint8Array(r.result),'');};r.readAsArrayBuffer(f);};
+document.getElementById('clear').onclick=()=>{document.getElementById('text').value='';setBytes(new Uint8Array(),'');};
+document.querySelectorAll('.copy').forEach(b=>b.onclick=()=>{const map={text:'text',b64:'b64',hex:'hex',bin:'bin'};navigator.clipboard&&navigator.clipboard.writeText(document.getElementById(map[b.dataset.fmt]).value);b.textContent='✓';setTimeout(()=>b.textContent='copy',1000);});
+// init
+setBytes(enc.encode('Hello, 世界! 🌍'),'text');
+</script>
+</body>
+</html>

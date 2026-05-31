@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cron Expression Visualizer</title>
+<style>
+  :root{--panel:#11151f;--accent:#f472b6;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--ok:#4ade80}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1000px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  #cron{width:100%;font-family:monospace;font-size:22px;text-align:center;background:#05080f;color:var(--accent);border:1px solid var(--line);border-radius:10px;padding:14px;letter-spacing:4px}
+  .fields{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:10px}
+  .field{text-align:center;font-size:11px;color:var(--muted)}
+  .field .val{font-family:monospace;font-size:14px;color:var(--txt);background:#1a212e;border-radius:6px;padding:6px;margin-top:4px}
+  .human{font-size:17px;text-align:center;padding:14px;color:var(--ok)}
+  .human.err{color:#f87171}
+  .presets button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;margin:3px;font-family:monospace}
+  .presets button:hover{border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+  td,th{border-bottom:1px solid var(--line);padding:8px;text-align:left}
+  th{color:var(--muted)}
+  .next{color:var(--accent)}
+  h2{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+</style>
+</head>
+<body>
+<h1>⏰ Cron Expression Visualizer</h1>
+<div class="panel">
+  <input id="cron" value="*/15 9-17 * * 1-5" spellcheck="false">
+  <div class="fields">
+    <div class="field">minute<div class="val" id="f0">*/15</div>0-59</div>
+    <div class="field">hour<div class="val" id="f1">9-17</div>0-23</div>
+    <div class="field">day of month<div class="val" id="f2">*</div>1-31</div>
+    <div class="field">month<div class="val" id="f3">*</div>1-12</div>
+    <div class="field">day of week<div class="val" id="f4">1-5</div>0-6</div>
+  </div>
+  <div class="human" id="human"></div>
+  <div class="presets" style="text-align:center">
+    <button data-c="* * * * *">every minute</button>
+    <button data-c="0 * * * *">hourly</button>
+    <button data-c="0 0 * * *">daily midnight</button>
+    <button data-c="*/15 9-17 * * 1-5">workday 15min</button>
+    <button data-c="0 9 * * 1">Monday 9am</button>
+    <button data-c="0 0 1 * *">monthly</button>
+    <button data-c="30 3 * * 0">Sun 3:30am</button>
+  </div>
+</div>
+<div class="panel">
+  <h2>Next 10 scheduled runs</h2>
+  <table id="runs"><tbody></tbody></table>
+</div>
+<script>
+"use strict";
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MON=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function parseField(expr,min,max){
+  const out=new Set();
+  for(const part of expr.split(',')){
+    let step=1,range=part;
+    if(part.includes('/')){[range,step]=part.split('/');step=+step;}
+    let lo,hi;
+    if(range==='*'){lo=min;hi=max;}
+    else if(range.includes('-')){[lo,hi]=range.split('-').map(Number);}
+    else{lo=hi=+range;}
+    if(isNaN(lo)||isNaN(hi))throw new Error('bad field: '+part);
+    for(let i=lo;i<=hi;i+=step)out.add(i);
+  }
+  return out;
+}
+function describe(fields){
+  const[m,h,dom,mon,dow]=fields.raw;
+  function listOf(set,names){const a=[...set].sort((x,y)=>x-y);return names?a.map(i=>names[i]).join(', '):a.join(', ');}
+  let parts=[];
+  // time
+  if(m==='*'&&h==='*')parts.push('every minute');
+  else if(m.startsWith('*/'))parts.push(`every ${m.slice(2)} minutes`);
+  else if(!m.includes('*')&&!h.includes('*')&&!m.includes(',')&&!h.includes(',')&&!m.includes('-')&&!h.includes('-'))parts.push(`at ${String(+h).padStart(2,'0')}:${String(+m).padStart(2,'0')}`);
+  else parts.push(`at minute ${m} past hour ${h}`);
+  if(dom!=='*')parts.push(`on day-of-month ${dom}`);
+  if(mon!=='*')parts.push(`in ${listOf(fields.mon,MON)}`);
+  if(dow!=='*')parts.push(`on ${listOf(fields.dow,DOW)}`);
+  return parts.join(', ');
+}
+function matches(date,f){
+  return f.min.has(date.getMinutes())&&f.hour.has(date.getHours())&&f.dom.has(date.getDate())&&f.mon.has(date.getMonth()+1)&&f.dow.has(date.getDay());
+}
+function nextRuns(f,count){
+  const out=[];let d=new Date();d.setSeconds(0,0);d.setMinutes(d.getMinutes()+1);
+  let guard=0;
+  while(out.length<count&&guard<525600*2){if(matches(d,f))out.push(new Date(d));d.setMinutes(d.getMinutes()+1);guard++;}
+  return out;
+}
+function run(){
+  const v=document.getElementById('cron').value.trim();
+  const parts=v.split(/\s+/);
+  const human=document.getElementById('human');
+  if(parts.length!==5){human.className='human err';human.textContent='⚠ A cron expression needs exactly 5 fields';return;}
+  parts.forEach((p,i)=>document.getElementById('f'+i).textContent=p);
+  try{
+    const f={
+      min:parseField(parts[0],0,59),hour:parseField(parts[1],0,23),
+      dom:parseField(parts[2],1,31),mon:parseField(parts[3],1,12),dow:parseField(parts[4],0,6),
+      raw:parts
+    };
+    human.className='human';human.textContent='“'+describe(f)+'”';
+    const runs=nextRuns(f,10);
+    document.getElementById('runs').querySelector('tbody').innerHTML='<tr><th>#</th><th>date</th><th>day</th><th>relative</th></tr>'+
+      runs.map((r,i)=>{const diff=r-new Date();const mins=Math.round(diff/60000);const rel=mins<60?mins+' min':mins<1440?Math.round(mins/60)+' h':Math.round(mins/1440)+' d';return `<tr><td>${i+1}</td><td class="next">${r.toLocaleString()}</td><td>${DOW[r.getDay()]}</td><td style="color:var(--muted)">in ${rel}</td></tr>`;}).join('')
+      ||'<tr><td>no runs found within 2 years</td></tr>';
+  }catch(e){human.className='human err';human.textContent='⚠ '+e.message;}
+}
+document.getElementById('cron').oninput=run;
+document.querySelectorAll('.presets button').forEach(b=>b.onclick=()=>{document.getElementById('cron').value=b.dataset.c;run();});
+run();
+</script>
+</body>
+</html>

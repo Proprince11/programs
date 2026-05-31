@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cellular Automata — Conway's Game of Life</title>
+<style>
+  :root{--panel:#11161f;--accent:#4ade80;--txt:#e6edf3;--muted:#8b94a3;--line:#242c39}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a10;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:260px 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=text]{width:100%;background:#0a0e16;border:1px solid var(--line);color:var(--accent);border-radius:6px;padding:6px;font-family:monospace;text-align:center}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px;font-size:12px;cursor:pointer;margin:4px 2px 0 0}
+  button:hover{border-color:var(--accent)}
+  button.active{background:var(--accent);color:#04240f}
+  select{width:100%;background:#0a0e16;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px}
+  canvas{background:#03060c;border-radius:10px;display:block;cursor:cell;width:100%}
+  .stat{font-size:11px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.6}
+</style>
+</head>
+<body>
+<h1>🦠 Cellular Automata — Game of Life Sandbox</h1>
+<div class="layout">
+  <div class="panel">
+    <button id="play" class="active" style="width:48%">▶ Run</button>
+    <button id="step" style="width:48%">Step ▷</button>
+    <button id="rand" style="width:48%">🎲 Random</button>
+    <button id="clear" style="width:48%">Clear</button>
+    <label>Speed <span id="spv">10</span> gen/s</label><input type="range" id="speed" min="1" max="60" value="10">
+    <label>Cell size <span id="csv">8</span>px</label><input type="range" id="csize" min="3" max="20" value="8">
+    <label>Ruleset (B/S notation)</label>
+    <input type="text" id="rule" value="B3/S23">
+    <select id="presetRule">
+      <option value="B3/S23">Conway (B3/S23)</option>
+      <option value="B36/S23">HighLife (B36/S23)</option>
+      <option value="B2/S">Seeds (B2/S)</option>
+      <option value="B3678/S34678">Day&Night</option>
+      <option value="B1357/S1357">Replicator</option>
+      <option value="B345/S5">Coral-ish</option>
+    </select>
+    <label>Pattern stamps</label>
+    <select id="stamp"><option value="">— draw freehand —</option><option value="glider">Glider</option><option value="lwss">Lightweight Spaceship</option><option value="pulsar">Pulsar</option><option value="gun">Gosper Glider Gun</option></select>
+    <button id="wrap" class="active" style="width:100%">Toroidal wrap: ON</button>
+    <div class="stat" id="stat"></div>
+  </div>
+  <div class="panel"><canvas id="cv"></canvas></div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let CELL=8,cols,rows,grid,next,running=true,gen=0,wrap=true,born=new Set([3]),survive=new Set([2,3]);
+function P(id){return +document.getElementById(id).value;}
+function alloc(){const wpx=cv.clientWidth;CELL=P('csize');cols=Math.floor(wpx/CELL);rows=Math.floor((window.innerHeight-120)/CELL);cv.width=cols*CELL;cv.height=rows*CELL;grid=new Uint8Array(cols*rows);next=new Uint8Array(cols*rows);}
+function idx(x,y){return y*cols+x;}
+function parseRule(){const v=document.getElementById('rule').value.toUpperCase();const m=v.match(/B([0-9]*)\/S([0-9]*)/);if(!m)return;born=new Set(m[1].split('').map(Number));survive=new Set(m[2].split('').map(Number));}
+function stepGen(){
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+    let n=0;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy)continue;let nx=x+dx,ny=y+dy;
+      if(wrap){nx=(nx+cols)%cols;ny=(ny+rows)%rows;}else if(nx<0||ny<0||nx>=cols||ny>=rows)continue;
+      n+=grid[idx(nx,ny)];
+    }
+    const a=grid[idx(x,y)];
+    next[idx(x,y)]=a?(survive.has(n)?1:0):(born.has(n)?1:0);
+  }
+  [grid,next]=[next,grid];gen++;
+}
+function draw(){
+  ctx.fillStyle='#03060c';ctx.fillRect(0,0,cv.width,cv.height);
+  let alive=0;
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){if(grid[idx(x,y)]){alive++;ctx.fillStyle=`hsl(${130+ (x+y)%80} 70% 55%)`;ctx.fillRect(x*CELL,y*CELL,CELL-1,CELL-1);}}
+  document.getElementById('stat').textContent=`generation: ${gen}\nalive cells: ${alive}\ngrid: ${cols}×${rows}\nrule: B${[...born].join('')}/S${[...survive].join('')}`;
+}
+let acc=0,last=0;
+function loop(ts){requestAnimationFrame(loop);const interval=1000/P('speed');if(running&&ts-last>=interval){last=ts;stepGen();}draw();}
+// drawing & stamps
+const STAMPS={
+  glider:[[1,0],[2,1],[0,2],[1,2],[2,2]],
+  lwss:[[1,0],[4,0],[0,1],[0,2],[4,2],[0,3],[1,3],[2,3],[3,3]],
+  pulsar:(()=>{const c=[];const base=[2,3,4,8,9,10];function line(r,arr){arr.forEach(x=>c.push([x,r]));}[0,5,7,12].forEach(r=>line(r,base));[2,3,4,8,9,10].forEach(r=>{[0,5,7,12].forEach(x=>c.push([x,r]));});return c;})(),
+  gun:[[24,0],[22,1],[24,1],[12,2],[13,2],[20,2],[21,2],[34,2],[35,2],[11,3],[15,3],[20,3],[21,3],[34,3],[35,3],[0,4],[1,4],[10,4],[16,4],[20,4],[21,4],[0,5],[1,5],[10,5],[14,5],[16,5],[17,5],[22,5],[24,5],[10,6],[16,6],[24,6],[11,7],[15,7],[12,8],[13,8]]
+};
+function place(px,py){const c=document.getElementById('stamp').value;const cx=Math.floor(px/CELL),cy=Math.floor(py/CELL);if(c&&STAMPS[c]){STAMPS[c].forEach(([dx,dy])=>{const x=(cx+dx)%cols,y=(cy+dy)%rows;grid[idx(x,y)]=1;});}else{grid[idx(cx,cy)]=1;}}
+let painting=false;
+cv.addEventListener('mousedown',e=>{painting=true;const r=cv.getBoundingClientRect();place(e.clientX-r.left,e.clientY-r.top);draw();});
+cv.addEventListener('mousemove',e=>{if(!painting||document.getElementById('stamp').value)return;const r=cv.getBoundingClientRect();const x=Math.floor((e.clientX-r.left)/CELL),y=Math.floor((e.clientY-r.top)/CELL);if(x>=0&&y>=0&&x<cols&&y<rows){grid[idx(x,y)]=1;draw();}});
+window.addEventListener('mouseup',()=>painting=false);
+document.getElementById('play').onclick=function(){running=!running;this.classList.toggle('active',running);this.textContent=running?'⏸ Pause':'▶ Run';};
+document.getElementById('step').onclick=()=>{stepGen();draw();};
+document.getElementById('rand').onclick=()=>{for(let i=0;i<grid.length;i++)grid[i]=Math.random()<0.28?1:0;gen=0;draw();};
+document.getElementById('clear').onclick=()=>{grid.fill(0);gen=0;draw();};
+document.getElementById('csize').oninput=function(){document.getElementById('csv').textContent=this.value;const old=grid,oc=cols,or=rows;alloc();for(let y=0;y<Math.min(or,rows);y++)for(let x=0;x<Math.min(oc,cols);x++)grid[idx(x,y)]=old[y*oc+x];draw();};
+document.getElementById('speed').oninput=function(){document.getElementById('spv').textContent=this.value;};
+document.getElementById('rule').oninput=parseRule;
+document.getElementById('presetRule').onchange=function(){document.getElementById('rule').value=this.value;parseRule();};
+document.getElementById('wrap').onclick=function(){wrap=!wrap;this.classList.toggle('active',wrap);this.textContent='Toroidal wrap: '+(wrap?'ON':'OFF');};
+window.addEventListener('resize',()=>{alloc();draw();});
+alloc();document.getElementById('rand').click();loop(0);
+</script>
+</body>
+</html>

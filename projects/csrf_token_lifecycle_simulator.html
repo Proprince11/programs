@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSRF Token Lifecycle Simulator</title>
+<style>
+  :root{--panel:#11151f;--accent:#34d399;--danger:#f87171;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1050px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:6px}
+  .sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+  .stage{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .node{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .node h2{font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .browser h2{color:#60a5fa}.attacker h2{color:var(--danger)}.server h2{color:var(--accent)}
+  .field{font-family:monospace;font-size:12px;background:#05080f;border-radius:6px;padding:8px;margin:6px 0;word-break:break-all}
+  .label{font-size:10px;color:var(--muted);text-transform:uppercase}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:9px;cursor:pointer;font-size:13px;width:100%;margin-top:8px}
+  button:hover{border-color:var(--accent)}
+  button.danger:hover{border-color:var(--danger);color:var(--danger)}
+  .log{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:14px;font-family:monospace;font-size:12px;max-height:240px;overflow:auto}
+  .log div{padding:3px 0;border-bottom:1px solid var(--line)}
+  .ok{color:var(--accent)}.bad{color:var(--danger)}.info{color:var(--muted)}
+  .toggle{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px}
+  .arrow{text-align:center;color:var(--muted);font-size:11px}
+</style>
+</head>
+<body>
+<h1>🔒 CSRF Token Lifecycle Simulator</h1>
+<div class="sub">Demonstrates the synchronizer-token pattern: why a state-changing request without a matching anti-CSRF token (or with a stale one) is rejected, and how a cross-site forged request fails.</div>
+<div class="stage">
+  <div class="node browser">
+    <h2>🌐 Legitimate Browser</h2>
+    <div class="label">Session cookie</div><div class="field" id="cookie">—</div>
+    <div class="label">CSRF token (in form / meta)</div><div class="field" id="clientToken">—</div>
+    <button id="loadPage">1 · Load page (GET form)</button>
+    <button id="submit">2 · Submit transfer (POST + token)</button>
+  </div>
+  <div class="node attacker">
+    <h2>😈 Attacker Site (evil.example)</h2>
+    <div class="label">Auto-submitting hidden form</div>
+    <div class="field">POST /transfer<br>amount=10000&to=attacker<br><span style="color:var(--danger)">csrf_token=??? (cannot read)</span></div>
+    <button class="danger" id="forge">⚡ Fire forged cross-site request</button>
+    <div class="toggle"><input type="checkbox" id="guessToken"> attacker guesses token</div>
+  </div>
+  <div class="node server">
+    <h2>🖥️ Server</h2>
+    <div class="label">Session store</div><div class="field" id="serverSession">—</div>
+    <div class="label">Validation policy</div>
+    <div class="toggle"><input type="checkbox" id="enforce" checked> enforce CSRF token</div>
+    <div class="toggle"><input type="checkbox" id="samesite" checked> SameSite=Lax cookie</div>
+    <div class="toggle"><input type="checkbox" id="rotate"> rotate token per request</div>
+  </div>
+</div>
+<div class="log" id="log"></div>
+<script>
+"use strict";
+let session=null; // {id, csrf}
+let clientToken=null;
+function rndToken(){return [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');}
+function log(msg,cls){const d=document.createElement('div');d.className=cls||'info';d.textContent=msg;document.getElementById('log').prepend(d);}
+function render(){
+  document.getElementById('cookie').textContent=session?('SID='+session.id.slice(0,16)+'…'):'(no session)';
+  document.getElementById('clientToken').textContent=clientToken?clientToken.slice(0,24)+'…':'(none)';
+  document.getElementById('serverSession').textContent=session?('SID='+session.id.slice(0,12)+'…\ncsrf='+session.csrf.slice(0,12)+'…'):'(empty)';
+}
+document.getElementById('loadPage').onclick=()=>{
+  session={id:rndToken()+rndToken(),csrf:rndToken()};
+  clientToken=session.csrf; // server embeds token in the page
+  log('GET /account → 200. Server set session cookie + embedded CSRF token in form.','ok');
+  render();
+};
+function validate(provided,origin){
+  const enforce=document.getElementById('enforce').checked;
+  const samesite=document.getElementById('samesite').checked;
+  if(!session){log('POST rejected: no active session (401).','bad');return false;}
+  if(samesite&&origin==='cross-site'){log('SameSite=Lax: cookie NOT sent on cross-site POST → server sees no session → request fails (403).','bad');return false;}
+  if(!enforce){log('⚠ CSRF enforcement OFF: server accepts POST on cookie alone — VULNERABLE! Transfer executed.','bad');return true;}
+  if(provided===session.csrf){log('✓ Token matches session. POST /transfer → 200. Transfer authorized.','ok');if(document.getElementById('rotate').checked){session.csrf=rndToken();clientToken=session.csrf;log('Token rotated for next request.','info');}return true;}
+  log('✗ Token mismatch ('+(provided?'stale/forged':'missing')+'). POST /transfer → 403 Forbidden.','bad');return false;
+}
+document.getElementById('submit').onclick=()=>{
+  if(!session){log('Load the page first to obtain a session + token.','bad');render();return;}
+  log('Legitimate POST /transfer from same-origin form, token='+clientToken.slice(0,8)+'…','info');
+  validate(clientToken,'same-site');render();
+};
+document.getElementById('forge').onclick=()=>{
+  log('--- Attacker triggers hidden auto-submit form from evil.example ---','info');
+  let guessed=null;
+  if(document.getElementById('guessToken').checked){guessed=rndToken();log('Attacker submits a GUESSED token: '+guessed.slice(0,8)+'… (256-bit space → ~0% chance).','info');}
+  else log('Attacker has no access to the token (Same-Origin Policy blocks reading it).','info');
+  validate(guessed,'cross-site');render();
+};
+render();
+log('Ready. Step 1: Load page. Step 2: Submit. Then try the attacker forged request.','info');
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enigma Machine Simulator</title>
+<style>
+  :root{--panel:#1a1410;--accent:#d4a056;--txt:#f0e6d2;--muted:#a08c6e;--line:#3a2e22;--lamp:#3a3020}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d0a07;color:var(--txt);font-family:'Courier New',monospace;padding:16px;max-width:900px;margin:0 auto}
+  h1{font-size:20px;margin-bottom:4px;color:var(--accent)}
+  .sub{font-size:12px;color:var(--muted);margin-bottom:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .rotors{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .rotor{text-align:center}
+  .rotor select{background:#0d0a07;color:var(--accent);border:1px solid var(--line);border-radius:6px;padding:6px;font-family:monospace}
+  .window{background:#0d0a07;border:2px solid var(--accent);border-radius:6px;width:54px;height:54px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;margin:6px auto;color:var(--accent)}
+  .rotor button{background:#2a2016;border:1px solid var(--line);color:var(--txt);border-radius:5px;cursor:pointer;width:24px;font-size:14px}
+  .lamps,.keys{display:flex;flex-direction:column;gap:5px;align-items:center}
+  .lrow{display:flex;gap:5px;justify-content:center}
+  .lamp{width:34px;height:34px;border-radius:50%;background:var(--lamp);display:flex;align-items:center;justify-content:center;font-weight:700;color:#5a4a30}
+  .lamp.on{background:var(--accent);color:#0d0a07;box-shadow:0 0 16px var(--accent)}
+  .key{width:34px;height:34px;border-radius:50%;background:#2a2016;border:1px solid var(--line);color:var(--txt);cursor:pointer;font-weight:700}
+  .key:active,.key.active{background:var(--accent);color:#0d0a07}
+  .io{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
+  textarea{background:#0d0a07;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:monospace;font-size:15px;height:80px;resize:vertical;letter-spacing:2px;text-transform:uppercase}
+  .plug{display:flex;flex-wrap:wrap;gap:6px}
+  .plug input{width:54px;background:#0d0a07;color:var(--accent);border:1px solid var(--line);border-radius:5px;padding:5px;text-transform:uppercase;text-align:center;font-family:monospace}
+  label{font-size:11px;color:var(--muted)}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+</style>
+</head>
+<body>
+<h1>⚙️ Enigma Machine Simulator</h1>
+<div class="sub">Historically-accurate 3-rotor Wehrmacht Enigma I: rotor wiring, ring settings (Ringstellung), notch stepping with double-step anomaly, reflector B, and plugboard (Steckerbrett).</div>
+
+<div class="panel">
+  <h2>Rotors (left → right)</h2>
+  <div class="rotors" id="rotors"></div>
+</div>
+
+<div class="panel">
+  <h2>Lampboard</h2>
+  <div class="lamps" id="lamps"></div>
+</div>
+
+<div class="panel">
+  <h2>Keyboard — click or type A–Z</h2>
+  <div class="keys" id="keys"></div>
+</div>
+
+<div class="panel">
+  <h2>Message</h2>
+  <div class="io">
+    <div><label>INPUT</label><textarea id="input" placeholder="type here…" spellcheck="false"></textarea></div>
+    <div><label>OUTPUT (cipher)</label><textarea id="output" readonly></textarea></div>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin-top:8px">Enigma is reciprocal: set the same rotor start positions on a second machine and typing the OUTPUT reproduces the INPUT. <button id="reset" style="background:#2a2016;color:var(--txt);border:1px solid var(--line);border-radius:5px;cursor:pointer;padding:3px 8px">reset positions</button></p>
+</div>
+
+<div class="panel">
+  <h2>Plugboard (Steckerbrett) — swap letter pairs, e.g. AB</h2>
+  <div class="plug" id="plug"></div>
+</div>
+<script>
+"use strict";
+const WIRINGS={
+  I:{w:'EKMFLGDQVZNTOWYHXUSPAIBRCJ',notch:'Q'},
+  II:{w:'AJDKSIRUXBLHWTMCQGZNPYFVOE',notch:'E'},
+  III:{w:'BDFHJLCPRTXVZNYEIWGAKMUSQO',notch:'V'},
+  IV:{w:'ESOVPZJAYQUIRHXLNFTGKDCMWB',notch:'J'},
+  V:{w:'VZBRGITYUPSDNHLXAWMJQOFECK',notch:'Z'}
+};
+const REFLECTOR='YRUHQSLDPXNGOKMIEBFZCWVJAT';
+const A='A'.charCodeAt(0);
+let rotorChoice=['I','II','III'],pos=[0,0,0],ring=[0,0,0],plugboard={};
+function buildRotorUI(){
+  const cont=document.getElementById('rotors');cont.innerHTML='';
+  ['Left','Middle','Right'].forEach((name,i)=>{
+    const d=document.createElement('div');d.className='rotor';
+    d.innerHTML=`<label>${name}</label><br>
+      <select data-i="${i}">${Object.keys(WIRINGS).map(r=>`<option ${rotorChoice[i]===r?'selected':''}>${r}</option>`).join('')}</select>
+      <div><button data-up="${i}">▲</button></div>
+      <div class="window" id="win${i}">A</div>
+      <div><button data-dn="${i}">▼</button></div>
+      <label>Ring</label><br><select data-ring="${i}">${[...Array(26)].map((_,k)=>`<option value="${k}">${String.fromCharCode(A+k)}</option>`).join('')}</select>`;
+    cont.appendChild(d);
+  });
+  cont.querySelectorAll('select[data-i]').forEach(s=>s.onchange=()=>{rotorChoice[+s.dataset.i]=s.value;});
+  cont.querySelectorAll('select[data-ring]').forEach(s=>s.onchange=()=>{ring[+s.dataset.ring]=+s.value;});
+  cont.querySelectorAll('button[data-up]').forEach(b=>b.onclick=()=>{const i=+b.dataset.up;pos[i]=(pos[i]+1)%26;updateWindows();});
+  cont.querySelectorAll('button[data-dn]').forEach(b=>b.onclick=()=>{const i=+b.dataset.dn;pos[i]=(pos[i]+25)%26;updateWindows();});
+  updateWindows();
+}
+function updateWindows(){for(let i=0;i<3;i++)document.getElementById('win'+i).textContent=String.fromCharCode(A+pos[i]);}
+// keyboard layout
+const ROWS=['QWERTZUIO','ASDFGHJK','PYXCVBNML'];
+function buildKeyboard(){
+  const lamps=document.getElementById('lamps'),keys=document.getElementById('keys');lamps.innerHTML='';keys.innerHTML='';
+  ROWS.forEach(row=>{
+    const lr=document.createElement('div');lr.className='lrow';
+    const kr=document.createElement('div');kr.className='lrow';
+    for(const ch of row){const l=document.createElement('div');l.className='lamp';l.id='lamp'+ch;l.textContent=ch;lr.appendChild(l);
+      const k=document.createElement('button');k.className='key';k.textContent=ch;k.onclick=()=>press(ch);kr.appendChild(k);}
+    lamps.appendChild(lr);keys.appendChild(kr);
+  });
+}
+function buildPlugboard(){
+  const p=document.getElementById('plug');p.innerHTML='';
+  for(let i=0;i<10;i++){const inp=document.createElement('input');inp.maxLength=2;inp.placeholder='--';inp.oninput=updatePlugboard;p.appendChild(inp);}
+}
+function updatePlugboard(){
+  plugboard={};
+  document.querySelectorAll('#plug input').forEach(inp=>{const v=inp.value.toUpperCase().replace(/[^A-Z]/g,'');if(v.length===2&&v[0]!==v[1]){plugboard[v[0]]=v[1];plugboard[v[1]]=v[0];}});
+}
+function plug(c){const ch=String.fromCharCode(A+c);return plugboard[ch]?plugboard[ch].charCodeAt(0)-A:c;}
+function stepRotors(){
+  const midNotch=String.fromCharCode(A+pos[1])===WIRINGS[rotorChoice[1]].notch;
+  const rightNotch=String.fromCharCode(A+pos[2])===WIRINGS[rotorChoice[2]].notch;
+  if(midNotch){pos[1]=(pos[1]+1)%26;pos[0]=(pos[0]+1)%26;}
+  else if(rightNotch){pos[1]=(pos[1]+1)%26;}
+  pos[2]=(pos[2]+1)%26;
+}
+function fwd(c,r,i){const w=WIRINGS[r].w;const shift=pos[i]-ring[i];const idx=((c+shift)%26+26)%26;const out=w.charCodeAt(idx)-A;return ((out-shift)%26+26)%26;}
+function bwd(c,r,i){const w=WIRINGS[r].w;const shift=pos[i]-ring[i];const idx=((c+shift)%26+26)%26;const out=w.indexOf(String.fromCharCode(A+idx));return ((out-shift)%26+26)%26;}
+function encryptChar(ch){
+  stepRotors();updateWindows();
+  let c=ch.charCodeAt(0)-A;
+  c=plug(c);
+  c=fwd(c,rotorChoice[2],2);c=fwd(c,rotorChoice[1],1);c=fwd(c,rotorChoice[0],0);
+  c=REFLECTOR.charCodeAt(c)-A;
+  c=bwd(c,rotorChoice[0],0);c=bwd(c,rotorChoice[1],1);c=bwd(c,rotorChoice[2],2);
+  c=plug(c);
+  return String.fromCharCode(A+c);
+}
+function lampOn(ch){document.querySelectorAll('.lamp').forEach(l=>l.classList.remove('on'));const el=document.getElementById('lamp'+ch);if(el){el.classList.add('on');setTimeout(()=>el.classList.remove('on'),400);}}
+function press(ch){const out=encryptChar(ch);lampOn(out);document.getElementById('input').value+=ch;document.getElementById('output').value+=out;}
+document.getElementById('input').addEventListener('input',function(e){
+  // recompute entire output from scratch for consistency
+  const text=this.value.toUpperCase().replace(/[^A-Z]/g,'');this.value=text;
+  pos=[...startPos];let out='';for(const ch of text)out+=encryptChar(ch);
+  document.getElementById('output').value=out;if(text.length)lampOn(out[out.length-1]);
+});
+let startPos=[0,0,0];
+window.addEventListener('keydown',e=>{if(document.activeElement.tagName==='TEXTAREA'||document.activeElement.tagName==='INPUT')return;const k=e.key.toUpperCase();if(/^[A-Z]$/.test(k)){const btn=[...document.querySelectorAll('.key')].find(b=>b.textContent===k);if(btn){btn.classList.add('active');setTimeout(()=>btn.classList.remove('active'),150);}press(k);}});
+document.getElementById('reset').onclick=()=>{pos=[0,0,0];startPos=[0,0,0];updateWindows();document.getElementById('input').value='';document.getElementById('output').value='';};
+// snapshot start positions whenever user changes them manually (before typing)
+function snapshot(){startPos=[...pos];}
+buildRotorUI();buildKeyboard();buildPlugboard();
+// keep startPos in sync when rotors moved manually
+const origUpdate=updateWindows;
+document.getElementById('rotors').addEventListener('click',()=>setTimeout(()=>{startPos=[...pos];},0));
+document.querySelectorAll('#rotors select').forEach(s=>s.addEventListener('change',()=>{}));
+</script>
+</body>
+</html>

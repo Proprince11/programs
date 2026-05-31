@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git Branch Visualizer</title>
+<style>
+  :root{--panel:#11151f;--accent:#f97316;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .cmd{display:flex;gap:6px;margin-bottom:8px}
+  input{flex:1;background:#05080f;border:1px solid var(--line);color:#9ae6b4;border-radius:7px;padding:8px;font-family:monospace;font-size:13px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 10px;cursor:pointer;font-size:12px;margin:2px}
+  button:hover{border-color:var(--accent)}
+  .quick button{font-size:11px}
+  canvas{width:100%;background:#05080f;border-radius:10px;display:block}
+  .log{font-family:monospace;font-size:12px;max-height:160px;overflow:auto;margin-top:8px}
+  .log div{padding:2px 0;color:var(--muted)}
+  .log .err{color:#f87171}.log .ok{color:#4ade80}
+  .branches span{display:inline-block;padding:3px 10px;border-radius:10px;margin:2px;font-family:monospace;font-size:12px;cursor:pointer}
+  .branches span.head{outline:2px solid #fff}
+</style>
+</head>
+<body>
+<h1>🌳 Git Branch Visualizer <span style="font-size:12px;color:var(--muted)">— practice commit, branch, merge, rebase, cherry-pick</span></h1>
+<div class="layout">
+  <div class="panel">
+    <h2>Command</h2>
+    <div class="cmd"><input id="cmd" placeholder="git commit -m '...'" value="git commit -m 'init'"><button id="exec">Run</button></div>
+    <h2>Quick actions</h2>
+    <div class="quick">
+      <button data-c="git commit">commit</button>
+      <button data-c="git branch feature">branch feature</button>
+      <button data-c="git checkout feature">checkout feature</button>
+      <button data-c="git checkout main">checkout main</button>
+      <button data-c="git merge feature">merge feature</button>
+      <button data-c="git rebase main">rebase main</button>
+      <button data-c="git cherry-pick">cherry-pick HEAD~</button>
+      <button data-c="reset">⟲ reset demo</button>
+    </div>
+    <h2 style="margin-top:12px">Branches</h2>
+    <div class="branches" id="branches"></div>
+    <h2 style="margin-top:12px">Log</h2>
+    <div class="log" id="log"></div>
+  </div>
+  <div class="panel"><canvas id="cv" height="560"></canvas></div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth;}window.addEventListener('resize',()=>{resize();draw();});
+let commits=[],branches={},HEAD='main',counter=0;
+const COLORS=['#f97316','#60a5fa','#4ade80','#a78bfa','#f472b6','#22d3ee'];
+function shortId(){return (counter++).toString(16).padStart(2,'0')+Math.random().toString(16).slice(2,6);}
+function reset(){
+  commits=[];branches={};counter=0;
+  const c0=commit(null,'main','initial commit');
+  branches={main:c0.id};HEAD='main';
+  log('initialized repository','ok');
+  layout();draw();renderBranches();
+}
+function commit(parent,branch,msg,parent2){
+  const c={id:shortId(),parents:parent?[parent]:[],branch,msg:msg||'commit '+counter,x:0,y:0,color:COLORS[Object.keys(branches).indexOf(branch)%COLORS.length]||'#f97316'};
+  if(parent2)c.parents.push(parent2);
+  commits.push(c);return c;
+}
+function curBranchTip(){return branches[HEAD];}
+function findCommit(id){return commits.find(c=>c.id===id);}
+function doCommit(msg){const tip=curBranchTip();const c=commit(tip,HEAD,msg);branches[HEAD]=c.id;log(`[${HEAD} ${c.id.slice(0,7)}] ${c.msg}`,'ok');}
+function doBranch(name){if(branches[name]){log('branch exists','err');return;}branches[name]=curBranchTip();log(`created branch ${name}`,'ok');}
+function doCheckout(name){if(!branches[name]){log('no such branch','err');return;}HEAD=name;log(`switched to ${name}`,'ok');}
+function ancestors(id){const set=new Set();const st=[id];while(st.length){const c=findCommit(st.pop());if(!c||set.has(c.id))continue;set.add(c.id);c.parents.forEach(p=>st.push(p));}return set;}
+function doMerge(name){
+  if(!branches[name]){log('no such branch','err');return;}
+  const target=curBranchTip(),source=branches[name];
+  const anc=ancestors(target);
+  if(anc.has(source)){log('Already up to date.','ok');return;}
+  const srcAnc=ancestors(source);
+  if(srcAnc.has(target)){branches[HEAD]=source;log(`Fast-forward ${HEAD} → ${name}`,'ok');}
+  else{const c=commit(target,HEAD,`Merge branch '${name}'`,source);branches[HEAD]=c.id;log(`Merge made by 'ort' strategy`,'ok');}
+}
+function doRebase(onto){
+  if(!branches[onto]){log('no such branch','err');return;}
+  const base=branches[onto],tip=curBranchTip();
+  const baseAnc=ancestors(base);
+  // commits unique to current branch
+  const path=[];let cur=tip;while(cur&&!baseAnc.has(cur)){const c=findCommit(cur);path.unshift(c);cur=c.parents[0];}
+  if(path.length===0){log('nothing to rebase','ok');return;}
+  let parent=base;path.forEach(old=>{const c=commit(parent,HEAD,old.msg+" (rebased)");parent=c.id;});
+  branches[HEAD]=parent;log(`Rebased ${path.length} commit(s) onto ${onto}`,'ok');
+}
+function doCherryPick(){
+  // pick HEAD~ (the parent's sibling commit) - simplified: pick latest commit from another branch
+  const others=Object.keys(branches).filter(b=>b!==HEAD);
+  if(!others.length){log('no other branch to cherry-pick from','err');return;}
+  const src=findCommit(branches[others[0]]);
+  const c=commit(curBranchTip(),HEAD,`${src.msg} (cherry-pick)`);branches[HEAD]=c.id;
+  log(`cherry-picked ${src.id.slice(0,7)} from ${others[0]}`,'ok');
+}
+function exec(raw){
+  const cmd=raw.trim();
+  if(cmd==='reset'){reset();return;}
+  const m=cmd.match(/git\s+(\w[\w-]*)\s*(.*)/);
+  if(!m){log('not a git command','err');return;}
+  const[,sub,rest]=m;
+  if(sub==='commit'){const mm=rest.match(/-m\s+['"]?([^'"]*)/);doCommit(mm?mm[1]:undefined);}
+  else if(sub==='branch'){if(rest.trim())doBranch(rest.trim());else log(Object.keys(branches).join(', '),'ok');}
+  else if(sub==='checkout'){const b=rest.replace('-b','').trim();if(rest.includes('-b'))doBranch(b);doCheckout(b);}
+  else if(sub==='switch'){doCheckout(rest.trim());}
+  else if(sub==='merge'){doMerge(rest.trim());}
+  else if(sub==='rebase'){doRebase(rest.trim());}
+  else if(sub==='cherry-pick'){doCherryPick();}
+  else log('unsupported: '+sub,'err');
+  layout();draw();renderBranches();
+}
+function layout(){
+  // assign columns per branch, rows by order
+  const branchOrder=[...new Set(commits.map(c=>c.branch))];
+  commits.forEach((c,i)=>{c.y=cv.height-40-i*44;c.x=60+branchOrder.indexOf(c.branch)*70;});
+}
+function draw(){
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,cv.width,cv.height);
+  // edges
+  ctx.lineWidth=2;
+  commits.forEach(c=>{c.parents.forEach(pid=>{const p=findCommit(pid);if(!p)return;ctx.strokeStyle=c.color;ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.bezierCurveTo(c.x,(c.y+p.y)/2,p.x,(c.y+p.y)/2,p.x,p.y);ctx.stroke();});});
+  // nodes
+  commits.forEach(c=>{ctx.fillStyle=c.color;ctx.beginPath();ctx.arc(c.x,c.y,11,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.font='10px monospace';ctx.fillText(c.id.slice(0,5),c.x+16,c.y-2);ctx.fillStyle='#8b94a3';ctx.fillText(c.msg.slice(0,28),c.x+16,c.y+11);});
+  // branch labels at tips
+  for(const b in branches){const c=findCommit(branches[b]);if(!c)continue;ctx.fillStyle=b===HEAD?'#fff':c.color;ctx.fillRect(c.x-30,c.y-30,Math.max(46,b.length*7+(b===HEAD?28:0)),16);ctx.fillStyle='#000';ctx.font='bold 10px monospace';ctx.fillText((b===HEAD?'HEAD→':'')+b,c.x-27,c.y-18);}
+}
+function renderBranches(){document.getElementById('branches').innerHTML=Object.keys(branches).map(b=>`<span class="${b===HEAD?'head':''}" style="background:${COLORS[Object.keys(branches).indexOf(b)%COLORS.length]}33;color:${COLORS[Object.keys(branches).indexOf(b)%COLORS.length]}" data-b="${b}">${b}</span>`).join('');document.querySelectorAll('.branches span').forEach(s=>s.onclick=()=>exec('git checkout '+s.dataset.b));}
+function log(msg,cls){const d=document.createElement('div');d.className=cls||'';d.textContent='$ '+msg;document.getElementById('log').prepend(d);}
+document.getElementById('exec').onclick=()=>exec(document.getElementById('cmd').value);
+document.getElementById('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')exec(e.target.value);});
+document.querySelectorAll('.quick button').forEach(b=>b.onclick=()=>{document.getElementById('cmd').value=b.dataset.c.startsWith('git')?b.dataset.c:'reset';exec(b.dataset.c);});
+resize();reset();
+// seed a richer demo graph
+exec("git commit -m 'add readme'");exec('git branch feature');exec('git checkout feature');exec("git commit -m 'feature work'");exec("git commit -m 'more feature'");exec('git checkout main');exec("git commit -m 'hotfix'");
+</script>
+</body>
+</html>

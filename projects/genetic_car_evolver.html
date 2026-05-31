@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Genetic Car Evolver</title>
+<style>
+  :root{--panel:#10141d;--accent:#22d3ee;--txt:#e6edf3;--muted:#8b94a3;--line:#242c39}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a12;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 260px;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  canvas{width:100%;background:#0a1018;border-radius:10px;display:block}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#1a2230;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px;font-size:12px;cursor:pointer;margin-top:6px;width:100%}
+  button:hover{border-color:var(--accent)}
+  .stat{font-size:12px;font-family:monospace;color:var(--muted);margin-top:10px;line-height:1.7}
+  .bars{margin-top:8px}
+  .bar{height:10px;background:#1a2230;border-radius:3px;margin:2px 0;overflow:hidden}
+  .bar>div{height:100%;background:linear-gradient(90deg,#22d3ee,#4ade80)}
+</style>
+</head>
+<body>
+<h1>🚗 Genetic Car Evolver — neuro-evolution over procedural terrain</h1>
+<div class="layout">
+  <div class="panel"><canvas id="cv" height="420"></canvas></div>
+  <div class="panel">
+    <label>Population <span id="popv">30</span></label><input type="range" id="pop" min="10" max="80" step="5" value="30">
+    <label>Mutation rate <span id="mutv">0.10</span></label><input type="range" id="mut" min="0" max="0.5" step="0.01" value="0.1">
+    <label>Sim speed <span id="spv">2</span>×</label><input type="range" id="speed" min="1" max="8" value="2">
+    <button id="restart">⟲ Restart evolution</button>
+    <button id="newTerrain">🗻 New terrain</button>
+    <button id="pause">⏸ Pause</button>
+    <div class="stat" id="stat"></div>
+    <div class="stat">Top genomes by fitness</div>
+    <div class="bars" id="bars"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth;}window.addEventListener('resize',resize);resize();
+function P(id){return +document.getElementById(id).value;}
+// ---- terrain ----
+let terrain=[],seed=Math.random()*1000;
+function terrainAt(x){ // smooth sum of sines
+  return Math.sin(x*0.004+seed)*60 + Math.sin(x*0.011+seed*2)*30 + Math.sin(x*0.023+seed)*14 + x*0.02;
+}
+// ---- tiny neural network ----
+const NIN=5,NHID=6,NOUT=1;
+function randNet(){return{w1:rand(NIN*NHID),b1:rand(NHID),w2:rand(NHID*NOUT),b2:rand(NOUT)};}
+function rand(n){return Array.from({length:n},()=>Math.random()*2-1);}
+function think(net,inp){
+  const h=[];for(let j=0;j<NHID;j++){let s=net.b1[j];for(let i=0;i<NIN;i++)s+=inp[i]*net.w1[i*NHID+j];h[j]=Math.tanh(s);}
+  let o=net.b2[0];for(let j=0;j<NHID;j++)o+=h[j]*net.w2[j];return Math.tanh(o);
+}
+function crossover(a,b){const child=randNet();for(const k of['w1','b1','w2','b2']){child[k]=a[k].map((v,i)=>Math.random()<0.5?v:b[k][i]);}return child;}
+function mutate(net,rate){for(const k of['w1','b1','w2','b2'])net[k]=net[k].map(v=>Math.random()<rate?v+(Math.random()*2-1)*0.5:v);return net;}
+// ---- car ----
+function makeCar(net){return{net,x:60,y:0,vx:0,angle:0,alive:true,fitness:0,stuck:0,color:`hsl(${Math.random()*360} 70% 60%)`};}
+let cars=[],generation=1,bestEver=0,running=true,frame=0,camX=0;
+function init(){const n=P('pop');cars=[];for(let i=0;i<n;i++)cars.push(makeCar(randNet()));generation=1;bestEver=0;}
+function reproduce(){
+  cars.sort((a,b)=>b.fitness-a.fitness);
+  const best=cars[0].fitness;if(best>bestEver)bestEver=best;
+  const n=P('pop'),mut=P('mut');
+  const elite=cars.slice(0,Math.max(2,n/5|0));
+  const next=[];
+  // keep top 2 unchanged (elitism)
+  next.push(makeCar(JSON.parse(JSON.stringify(elite[0].net))));
+  next.push(makeCar(JSON.parse(JSON.stringify(elite[1%elite.length].net))));
+  while(next.length<n){
+    const a=elite[Math.random()*elite.length|0],b=elite[Math.random()*elite.length|0];
+    next.push(makeCar(mutate(crossover(a.net,b.net),mut)));
+  }
+  cars=next;generation++;
+}
+function stepCar(c){
+  if(!c.alive)return;
+  const g=terrainAt(c.x),gAhead=terrainAt(c.x+20);
+  const slope=Math.atan2(gAhead-g,20);
+  // sensors: slopes at lookaheads + velocity
+  const inp=[slope, (terrainAt(c.x+60)-g)/60, (terrainAt(c.x+120)-g)/120, c.vx/8, Math.sin(c.x*0.01)];
+  const throttle=think(c.net,inp); // -1..1
+  // simple kinematics: drive force minus gravity along slope
+  const drive=throttle*0.5;
+  c.vx += drive - Math.sin(slope)*0.35 - 0.02*c.vx; // friction
+  if(c.vx<-2)c.vx=-2;
+  c.x += c.vx;
+  c.y = terrainAt(c.x);
+  c.angle=slope;
+  c.fitness=c.x;
+  // stuck detection
+  if(c.vx<0.05){c.stuck++;if(c.stuck>120)c.alive=false;}else c.stuck=0;
+  if(c.x<40)c.alive=false;
+}
+function allDead(){return cars.every(c=>!c.alive);}
+function update(){
+  const speed=P('speed');
+  for(let s=0;s<speed;s++){cars.forEach(stepCar);frame++;if(allDead()||frame>4000){reproduce();frame=0;break;}}
+  // camera follows leader
+  const leader=cars.reduce((m,c)=>c.x>m.x?c:m,cars[0]);
+  camX += (leader.x-cv.width*0.35-camX)*0.08;
+}
+function draw(){
+  const W=cv.width,H=cv.height;
+  ctx.fillStyle='#0a1018';ctx.fillRect(0,0,W,H);
+  const groundY=H*0.78;
+  // terrain
+  ctx.fillStyle='#1b2a1b';ctx.strokeStyle='#3a5a3a';ctx.lineWidth=2;ctx.beginPath();
+  ctx.moveTo(0,H);
+  for(let sx=0;sx<=W;sx+=4){const wx=camX+sx;ctx.lineTo(sx,groundY+terrainAt(wx));}
+  ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+  ctx.beginPath();for(let sx=0;sx<=W;sx+=4){const wx=camX+sx;sx===0?ctx.moveTo(sx,groundY+terrainAt(wx)):ctx.lineTo(sx,groundY+terrainAt(wx));}ctx.stroke();
+  // cars
+  cars.forEach(c=>{
+    const sx=c.x-camX,sy=groundY+c.y;
+    if(sx<-30||sx>W+30)return;
+    ctx.save();ctx.translate(sx,sy-12);ctx.rotate(c.angle);
+    ctx.globalAlpha=c.alive?1:0.2;
+    ctx.fillStyle=c.color;ctx.fillRect(-14,-8,28,12);
+    ctx.fillStyle='#111';ctx.beginPath();ctx.arc(-9,6,5,0,7);ctx.arc(9,6,5,0,7);ctx.fill();
+    ctx.restore();ctx.globalAlpha=1;
+  });
+  // HUD
+  document.getElementById('stat').textContent=`generation: ${generation}\nalive: ${cars.filter(c=>c.alive).length}/${cars.length}\nbest dist: ${Math.max(...cars.map(c=>c.fitness)).toFixed(0)}\nall-time best: ${bestEver.toFixed(0)}\nframe: ${frame}`;
+  const sorted=[...cars].sort((a,b)=>b.fitness-a.fitness).slice(0,8);const mx=sorted[0]?sorted[0].fitness:1;
+  document.getElementById('bars').innerHTML=sorted.map(c=>`<div class="bar"><div style="width:${(c.fitness/mx*100).toFixed(0)}%;background:${c.color}"></div></div>`).join('');
+}
+function loop(){requestAnimationFrame(loop);if(running)update();draw();}
+['pop','mut','speed'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById({pop:'popv',mut:'mutv',speed:'spv'}[id]).textContent=id==='mut'?P('mut').toFixed(2):P(id);});
+document.getElementById('restart').onclick=()=>{init();frame=0;};
+document.getElementById('newTerrain').onclick=()=>{seed=Math.random()*1000;init();frame=0;};
+document.getElementById('pause').onclick=function(){running=!running;this.textContent=running?'⏸ Pause':'▶ Resume';};
+init();loop();
+</script>
+</body>
+</html>

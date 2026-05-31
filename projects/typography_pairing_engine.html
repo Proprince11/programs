@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Typography Pairing Engine</title>
+<style>
+  :root{--bg:#f6f5f1;--panel:#fff;--ink:#1a1a1a;--muted:#6b6b6b;--line:#e2e0da;--accent:#d6432f}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;padding:18px}
+  h1{font-size:19px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:320px 1fr;gap:18px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px;text-transform:uppercase;letter-spacing:1px}
+  select,input[type=range]{width:100%}
+  select{padding:8px;border:1px solid var(--line);border-radius:8px;background:#fafafa}
+  input[type=range]{accent-color:var(--accent)}
+  .val{float:right;font-weight:600;color:var(--ink)}
+  .preview h2{margin:0}
+  .scale-item{padding:10px 0;border-bottom:1px dashed var(--line)}
+  .scale-meta{font-size:11px;color:var(--muted);font-family:monospace}
+  .pairbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .pairbtns button{font-size:11px;padding:6px 8px;border:1px solid var(--line);background:#fafafa;border-radius:7px;cursor:pointer}
+  .pairbtns button:hover{border-color:var(--accent)}
+  .metric{display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+  .badge{padding:1px 7px;border-radius:8px;font-size:11px;font-weight:700}
+  .good{background:#e3f4e3;color:#1d7d1d}.warn{background:#fdf0d5;color:#9a6700}.bad{background:#fbe3e3;color:#b42318}
+</style>
+</head>
+<body>
+<h1>🔤 Typography Pairing Engine</h1>
+<div class="layout">
+  <div class="panel">
+    <label>Heading font</label>
+    <select id="hfont"></select>
+    <label>Body font</label>
+    <select id="bfont"></select>
+    <label>Curated pairings</label>
+    <div class="pairbtns" id="pairs"></div>
+    <label>Base size <span class="val" id="baseV">18px</span></label>
+    <input type="range" id="base" min="14" max="24" value="18">
+    <label>Type scale ratio <span class="val" id="ratioV">1.250</span></label>
+    <input type="range" id="ratio" min="1.067" max="1.618" step="0.001" value="1.25">
+    <label>Body line-height <span class="val" id="lhV">1.6</span></label>
+    <input type="range" id="lh" min="1.1" max="2" step="0.05" value="1.6">
+    <label>Heading letter-spacing <span class="val" id="lsV">0px</span></label>
+    <input type="range" id="ls" min="-2" max="4" step="0.5" value="0">
+    <label>Measure (body width) <span class="val" id="meaV">66ch</span></label>
+    <input type="range" id="measure" min="40" max="90" value="66">
+    <div id="metrics" style="margin-top:14px"></div>
+  </div>
+  <div class="panel preview" id="preview"></div>
+</div>
+<script>
+"use strict";
+const FONTS=['Georgia, serif','"Times New Roman", serif','Garamond, serif','Palatino, serif',
+  'system-ui, sans-serif','Helvetica, Arial, sans-serif','Verdana, sans-serif','"Trebuchet MS", sans-serif',
+  '"Courier New", monospace','"Lucida Console", monospace','Tahoma, sans-serif','Impact, sans-serif'];
+const PAIRS=[['Georgia, serif','system-ui, sans-serif'],['Helvetica, Arial, sans-serif','Georgia, serif'],
+  ['Impact, sans-serif','Verdana, sans-serif'],['"Times New Roman", serif','Tahoma, sans-serif'],
+  ['"Trebuchet MS", sans-serif','Palatino, serif'],['Garamond, serif','Helvetica, Arial, sans-serif']];
+function isSerif(f){return/serif/.test(f)&&!/sans-serif/.test(f);}
+function isMono(f){return/monospace/.test(f);}
+function fontName(f){return f.split(',')[0].replace(/"/g,'');}
+const hsel=document.getElementById('hfont'),bsel=document.getElementById('bfont');
+FONTS.forEach(f=>{hsel.add(new Option(fontName(f),f));bsel.add(new Option(fontName(f),f));});
+hsel.value='Georgia, serif';bsel.value='system-ui, sans-serif';
+const pairsEl=document.getElementById('pairs');
+PAIRS.forEach(([h,b])=>{const btn=document.createElement('button');btn.textContent=fontName(h)+' / '+fontName(b);btn.onclick=()=>{hsel.value=h;bsel.value=b;render();};pairsEl.appendChild(btn);});
+function P(id){return +document.getElementById(id).value;}
+function render(){
+  const base=P('base'),ratio=P('ratio'),lh=P('lh'),ls=P('ls'),measure=P('measure');
+  document.getElementById('baseV').textContent=base+'px';
+  document.getElementById('ratioV').textContent=ratio.toFixed(3);
+  document.getElementById('lhV').textContent=lh.toFixed(2);
+  document.getElementById('lsV').textContent=ls+'px';
+  document.getElementById('meaV').textContent=measure+'ch';
+  const hf=hsel.value,bf=bsel.value;
+  const sizes={};for(let i=-1;i<=4;i++)sizes[i]=(base*Math.pow(ratio,i)).toFixed(1);
+  const pv=document.getElementById('preview');
+  pv.innerHTML=`
+    <div class="scale-item"><h1 style="font-family:${hf};font-size:${sizes[4]}px;letter-spacing:${ls}px;line-height:1.1">The Quick Brown Fox</h1><div class="scale-meta">H1 · ${sizes[4]}px · ${fontName(hf)}</div></div>
+    <div class="scale-item"><h2 style="font-family:${hf};font-size:${sizes[3]}px;letter-spacing:${ls}px;line-height:1.15">Jumps Over the Lazy Dog</h2><div class="scale-meta">H2 · ${sizes[3]}px</div></div>
+    <div class="scale-item"><h3 style="font-family:${hf};font-size:${sizes[2]}px;letter-spacing:${ls}px">A Display Subheading Example</h3><div class="scale-meta">H3 · ${sizes[2]}px</div></div>
+    <p style="font-family:${bf};font-size:${base}px;line-height:${lh};max-width:${measure}ch;margin-top:14px">
+      Good typography is invisible. The pairing of a ${isSerif(hf)?'serif':'sans-serif'} heading with a
+      ${isSerif(bf)?'serif':isMono(bf)?'monospace':'sans-serif'} body establishes contrast and hierarchy. Vertical rhythm,
+      measure, and a consistent modular scale guide the reader's eye through the content with minimal cognitive friction. 0123456789 — &amp; @ # %.
+    </p>
+    <p style="font-family:${bf};font-size:${(base*Math.pow(ratio,-1)).toFixed(1)}px;line-height:${lh};max-width:${measure}ch;color:var(--muted);margin-top:8px">
+      Small caption text at ${sizes[-1]}px demonstrates how the smallest step of the scale remains legible at this measure.
+    </p>`;
+  // analysis
+  const m=document.getElementById('metrics');m.innerHTML='<label>Pairing analysis</label>';
+  const contrastStyle = isSerif(hf)!==isSerif(bf);
+  const sameFamily = fontName(hf)===fontName(bf);
+  function add(name,verdict,cls){m.innerHTML+=`<div class="metric"><span>${name}</span><span class="badge ${cls}">${verdict}</span></div>`;}
+  add('Style contrast (serif vs sans)',contrastStyle?'Strong':(sameFamily?'None — same font':'Subtle'),contrastStyle?'good':sameFamily?'bad':'warn');
+  add('Scale ratio',ratio>=1.2&&ratio<=1.414?'Balanced':(ratio<1.2?'Tight':'Dramatic'),ratio>=1.2&&ratio<=1.414?'good':'warn');
+  add('Body line-height',lh>=1.4&&lh<=1.7?'Optimal':(lh<1.4?'Cramped':'Loose'),lh>=1.4&&lh<=1.7?'good':'warn');
+  add('Measure (CPL)',measure>=45&&measure<=75?'Ideal 45–75ch':(measure<45?'Too narrow':'Too wide'),measure>=45&&measure<=75?'good':'warn');
+  const ml=isMono(bf)?'bad':'good';
+  add('Body readability',isMono(bf)?'Mono body — avoid':'Proportional ✓',ml);
+}
+['hfont','bfont','base','ratio','lh','ls','measure'].forEach(id=>document.getElementById(id).oninput=render);
+render();
+</script>
+</body>
+</html>

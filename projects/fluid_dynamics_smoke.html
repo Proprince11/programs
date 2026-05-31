@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fluid Dynamics Smoke</title>
+<style>
+  :root{--panel:#10141d;--accent:#38bdf8;--txt:#e6edf3;--muted:#8b94a3;--line:#242c39}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#04060c;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #ui{position:fixed;top:12px;left:12px;background:rgba(16,20,29,0.92);border:1px solid var(--line);border-radius:12px;padding:14px;width:230px;z-index:10;backdrop-filter:blur(6px)}
+  h1{font-size:14px;margin-bottom:10px}
+  label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin:8px 0 3px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#19212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px;font-size:12px;cursor:pointer;margin-top:6px;width:100%}
+  button:hover{border-color:var(--accent)}
+  select{width:100%;background:#0a0e16;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+  canvas{display:block;cursor:crosshair}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>💨 Navier–Stokes Smoke</h1>
+  <label>Viscosity <span id="visv">0.0000</span></label><input type="range" id="vis" min="0" max="0.0005" step="0.00001" value="0">
+  <label>Diffusion <span id="difv">0.0000</span></label><input type="range" id="dif" min="0" max="0.0005" step="0.00001" value="0">
+  <label>Fade <span id="fadev">0.995</span></label><input type="range" id="fade" min="0.95" max="1" step="0.001" value="0.995">
+  <label>Force <span id="forv">5</span></label><input type="range" id="force" min="1" max="20" value="5">
+  <label>Color</label>
+  <select id="palette"><option>Plasma</option><option>Ocean</option><option>Mono</option><option>Velocity</option></select>
+  <button id="clear">Clear field</button>
+  <div class="hint">Stam's stable-fluids solver: advection + Gauss–Seidel pressure projection on a ${''} grid. Click &amp; drag to inject density and velocity.</div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+// Jos Stam "Stable Fluids" solver
+const N=128, size=(N+2)*(N+2);
+function IX(x,y){return x+(N+2)*y;}
+let u=new Float32Array(size),v=new Float32Array(size),u0=new Float32Array(size),v0=new Float32Array(size);
+let dens=new Float32Array(size),dens0=new Float32Array(size);
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W,H,scale;function resize(){const s=Math.min(innerWidth,innerHeight);W=cv.width=s;H=cv.height=s;scale=W/N;}
+window.addEventListener('resize',resize);resize();
+const img=ctx.createImageData(N,N);
+function P(id){return +document.getElementById(id).value;}
+function addSource(x,s,dt){for(let i=0;i<size;i++)x[i]+=dt*s[i];}
+function setBnd(b,x){for(let i=1;i<=N;i++){x[IX(0,i)]=b===1?-x[IX(1,i)]:x[IX(1,i)];x[IX(N+1,i)]=b===1?-x[IX(N,i)]:x[IX(N,i)];x[IX(i,0)]=b===2?-x[IX(i,1)]:x[IX(i,1)];x[IX(i,N+1)]=b===2?-x[IX(i,N)]:x[IX(i,N)];}x[IX(0,0)]=0.5*(x[IX(1,0)]+x[IX(0,1)]);x[IX(0,N+1)]=0.5*(x[IX(1,N+1)]+x[IX(0,N)]);x[IX(N+1,0)]=0.5*(x[IX(N,0)]+x[IX(N+1,1)]);x[IX(N+1,N+1)]=0.5*(x[IX(N,N+1)]+x[IX(N+1,N)]);}
+function lin(b,x,x0,a,c){for(let k=0;k<20;k++){for(let i=1;i<=N;i++)for(let j=1;j<=N;j++)x[IX(i,j)]=(x0[IX(i,j)]+a*(x[IX(i-1,j)]+x[IX(i+1,j)]+x[IX(i,j-1)]+x[IX(i,j+1)]))/c;setBnd(b,x);}}
+function diffuse(b,x,x0,diff,dt){const a=dt*diff*N*N;lin(b,x,x0,a,1+4*a);}
+function advect(b,d,d0,u,v,dt){const dt0=dt*N;for(let i=1;i<=N;i++)for(let j=1;j<=N;j++){let x=i-dt0*u[IX(i,j)],y=j-dt0*v[IX(i,j)];if(x<0.5)x=0.5;if(x>N+0.5)x=N+0.5;const i0=x|0,i1=i0+1;if(y<0.5)y=0.5;if(y>N+0.5)y=N+0.5;const j0=y|0,j1=j0+1;const s1=x-i0,s0=1-s1,t1=y-j0,t0=1-t1;d[IX(i,j)]=s0*(t0*d0[IX(i0,j0)]+t1*d0[IX(i0,j1)])+s1*(t0*d0[IX(i1,j0)]+t1*d0[IX(i1,j1)]);}setBnd(b,d);}
+function project(u,v,p,div){for(let i=1;i<=N;i++)for(let j=1;j<=N;j++){div[IX(i,j)]=-0.5*(u[IX(i+1,j)]-u[IX(i-1,j)]+v[IX(i,j+1)]-v[IX(i,j-1)])/N;p[IX(i,j)]=0;}setBnd(0,div);setBnd(0,p);lin(0,p,div,1,4);for(let i=1;i<=N;i++)for(let j=1;j<=N;j++){u[IX(i,j)]-=0.5*N*(p[IX(i+1,j)]-p[IX(i-1,j)]);v[IX(i,j)]-=0.5*N*(p[IX(i,j+1)]-p[IX(i,j-1)]);}setBnd(1,u);setBnd(2,v);}
+function velStep(dt){const visc=P('vis');addSource(u,u0,dt);addSource(v,v0,dt);[u0,u]=[u,u0];diffuse(1,u,u0,visc,dt);[v0,v]=[v,v0];diffuse(2,v,v0,visc,dt);project(u,v,u0,v0);[u0,u]=[u,u0];[v0,v]=[v,v0];advect(1,u,u0,u0,v0,dt);advect(2,v,v0,u0,v0,dt);project(u,v,u0,v0);}
+function densStep(dt){const diff=P('dif');addSource(dens,dens0,dt);[dens0,dens]=[dens,dens0];diffuse(0,dens,dens0,diff,dt);[dens0,dens]=[dens,dens0];advect(0,dens,dens0,u,v,dt);}
+const palettes={
+  Plasma:d=>[Math.min(255,d*3),Math.min(255,d*1.2),Math.min(255,80+d*0.8)],
+  Ocean:d=>[Math.min(255,d*0.3),Math.min(255,d*1.5),Math.min(255,d*2)],
+  Mono:d=>{const v=Math.min(255,d*2.2);return[v,v,v];},
+  Velocity:(d,sp)=>[Math.min(255,sp*900),Math.min(255,d*1.5),Math.min(255,200-sp*400)]
+};
+function render(){
+  const pal=palettes[document.getElementById('palette').value];const data=img.data;
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){const d=dens[IX(i+1,j+1)]*255;const sp=Math.hypot(u[IX(i+1,j+1)],v[IX(i+1,j+1)]);const c=pal(d,sp);const idx=(j*N+i)*4;data[idx]=c[0];data[idx+1]=c[1];data[idx+2]=c[2];data[idx+3]=255;}
+  // draw scaled
+  const tmp=document.createElement('canvas');tmp.width=tmp.height=N;tmp.getContext('2d').putImageData(img,0,0);
+  ctx.imageSmoothingEnabled=true;ctx.drawImage(tmp,0,0,W,H);
+}
+function step(){const dt=0.1;u0.fill(0);v0.fill(0);dens0.fill(0);applyInput(dt);velStep(dt);densStep(dt);const f=P('fade');for(let i=0;i<size;i++)dens[i]*=f;render();requestAnimationFrame(step);}
+// input
+let mouse={down:false,x:0,y:0,px:0,py:0};
+function applyInput(){if(!mouse.down)return;const i=Math.max(1,Math.min(N,(mouse.x/scale|0)+1)),j=Math.max(1,Math.min(N,(mouse.y/scale|0)+1));const F=P('force');dens0[IX(i,j)]+=100;u0[IX(i,j)]+=(mouse.x-mouse.px)*F;v0[IX(i,j)]+=(mouse.y-mouse.py)*F;mouse.px=mouse.x;mouse.py=mouse.y;}
+cv.addEventListener('mousedown',e=>{const r=cv.getBoundingClientRect();mouse.down=true;mouse.x=mouse.px=e.clientX-r.left;mouse.y=mouse.py=e.clientY-r.top;});
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();mouse.x=e.clientX-r.left;mouse.y=e.clientY-r.top;});
+window.addEventListener('mouseup',()=>mouse.down=false);
+cv.addEventListener('touchstart',e=>{const r=cv.getBoundingClientRect(),t=e.touches[0];mouse.down=true;mouse.x=mouse.px=t.clientX-r.left;mouse.y=mouse.py=t.clientY-r.top;},{passive:true});
+cv.addEventListener('touchmove',e=>{const r=cv.getBoundingClientRect(),t=e.touches[0];mouse.x=t.clientX-r.left;mouse.y=t.clientY-r.top;e.preventDefault();},{passive:false});
+window.addEventListener('touchend',()=>mouse.down=false);
+['vis','dif','fade','force'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById({vis:'visv',dif:'difv',fade:'fadev',force:'forv'}[id]).textContent=id==='force'?P('force'):P(id).toFixed(id==='fade'?3:4);});
+document.getElementById('clear').onclick=()=>{u.fill(0);v.fill(0);dens.fill(0);};
+step();
+</script>
+</body>
+</html>

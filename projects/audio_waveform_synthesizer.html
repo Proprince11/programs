@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Waveform Synthesizer</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--accent:#f78166;--txt:#e6edf3;--muted:#8b949e;--line:#30363d}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:system-ui,sans-serif;padding:18px}
+  h1{font-size:19px;margin-bottom:14px}
+  .layout{display:grid;grid-template-columns:320px 1fr;gap:18px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .knob{margin-bottom:14px}
+  .knob label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .waves{display:flex;gap:8px;margin-bottom:16px}
+  .waves button{flex:1;background:#21262d;border:1px solid var(--line);color:var(--txt);padding:8px;border-radius:8px;cursor:pointer;font-size:12px}
+  .waves button.active{background:var(--accent);color:#1a0c06;border-color:var(--accent)}
+  canvas{width:100%;background:#05080d;border-radius:10px;display:block;margin-bottom:14px}
+  .keys{display:flex;gap:2px;margin-top:10px;user-select:none}
+  .key{flex:1;height:120px;background:linear-gradient(#fff,#dfe3e8);border-radius:0 0 6px 6px;position:relative;cursor:pointer;border:1px solid #9aa3ad;color:#333;font-size:10px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px}
+  .key.black{background:linear-gradient(#333,#111);color:#ccc}
+  .key.down{background:var(--accent)}
+  .meta{font-size:12px;color:var(--muted);line-height:1.6}
+  .row{display:flex;gap:14px}.row>div{flex:1}
+</style>
+</head>
+<body>
+<h1>🎛️ Audio Waveform Synthesizer — ADSR Envelope Modulator</h1>
+<div class="layout">
+  <div class="panel">
+    <div class="waves" id="waves">
+      <button data-w="sine" class="active">Sine</button>
+      <button data-w="square">Square</button>
+      <button data-w="sawtooth">Saw</button>
+      <button data-w="triangle">Tri</button>
+    </div>
+    <div class="knob"><label>Attack <span id="aV">0.05</span>s</label><input type="range" id="attack" min="0" max="2" step="0.01" value="0.05"></div>
+    <div class="knob"><label>Decay <span id="dV">0.20</span>s</label><input type="range" id="decay" min="0" max="2" step="0.01" value="0.2"></div>
+    <div class="knob"><label>Sustain <span id="sV">0.60</span></label><input type="range" id="sustain" min="0" max="1" step="0.01" value="0.6"></div>
+    <div class="knob"><label>Release <span id="rV">0.40</span>s</label><input type="range" id="release" min="0" max="3" step="0.01" value="0.4"></div>
+    <div class="knob"><label>Filter cutoff <span id="fV">8000</span>Hz</label><input type="range" id="cutoff" min="100" max="12000" step="50" value="8000"></div>
+    <div class="knob"><label>Resonance Q <span id="qV">1</span></label><input type="range" id="q" min="0.1" max="20" step="0.1" value="1"></div>
+    <div class="knob"><label>Master gain <span id="gV">0.5</span></label><input type="range" id="gain" min="0" max="1" step="0.01" value="0.5"></div>
+  </div>
+  <div class="panel">
+    <div class="meta">ADSR envelope curve</div>
+    <canvas id="env" height="160"></canvas>
+    <div class="meta">Live oscilloscope</div>
+    <canvas id="scope" height="180"></canvas>
+    <div class="keys" id="keys"></div>
+    <p class="meta" style="margin-top:10px">Click keys or use your keyboard rows <b>A W S E D F T G Y H U J K</b>. Each note triggers the full ADSR contour through a state-variable lowpass filter.</p>
+  </div>
+</div>
+<script>
+"use strict";
+let actx=null,master=null;
+function init(){
+  if(actx)return;
+  actx=new (window.AudioContext||window.webkitAudioContext)();
+  master=actx.createGain();master.gain.value=+gain.value;master.connect(actx.destination);
+}
+let wave='sine';
+document.querySelectorAll('#waves button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#waves button').forEach(x=>x.classList.remove('active'));b.classList.add('active');wave=b.dataset.w;drawEnv();});
+const ids=['attack','decay','sustain','release','cutoff','q','gain'];
+const lbls={attack:'aV',decay:'dV',sustain:'sV',release:'rV',cutoff:'fV',q:'qV',gain:'gV'};
+ids.forEach(id=>{const el=document.getElementById(id);el.oninput=()=>{document.getElementById(lbls[id]).textContent=el.value;if(id==='gain'&&master)master.gain.value=+el.value;drawEnv();};});
+function P(id){return +document.getElementById(id).value;}
+
+// ----- envelope canvas -----
+const envC=document.getElementById('env');
+function drawEnv(){
+  const ctx=envC.getContext('2d');const W=envC.width=envC.clientWidth,H=envC.height;
+  ctx.clearRect(0,0,W,H);
+  const a=P('attack'),d=P('decay'),s=P('sustain'),r=P('release');
+  const total=a+d+0.6+r;const x=t=>(t/total)*W;
+  ctx.strokeStyle='#f78166';ctx.lineWidth=2;ctx.beginPath();
+  ctx.moveTo(0,H);
+  ctx.lineTo(x(a),4);                       // attack -> peak
+  ctx.lineTo(x(a+d),H-(s*(H-8))-4);         // decay -> sustain level
+  ctx.lineTo(x(a+d+0.6),H-(s*(H-8))-4);     // sustain hold
+  ctx.lineTo(x(total),H);                    // release -> 0
+  ctx.stroke();
+  ctx.fillStyle='rgba(247,129,102,0.12)';ctx.lineTo(0,H);ctx.fill();
+  ctx.fillStyle='#8b949e';ctx.font='11px monospace';
+  ctx.fillText('A',x(a/2),H-6);ctx.fillText('D',x(a+d/2),14);ctx.fillText('S',x(a+d+0.3),14);ctx.fillText('R',x(a+d+0.6+r/2),14);
+}
+window.addEventListener('resize',drawEnv);
+
+// ----- analyser scope -----
+let analyser=null,scopeData=null;
+function ensureScope(){if(analyser)return;analyser=actx.createAnalyser();analyser.fftSize=2048;scopeData=new Uint8Array(analyser.fftSize);master.connect(analyser);}
+const scopeC=document.getElementById('scope');
+function drawScope(){
+  requestAnimationFrame(drawScope);
+  const ctx=scopeC.getContext('2d');const W=scopeC.width=scopeC.clientWidth,H=scopeC.height;
+  ctx.fillStyle='#05080d';ctx.fillRect(0,0,W,H);
+  if(!analyser){ctx.strokeStyle='#1f6feb';ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();return;}
+  analyser.getByteTimeDomainData(scopeData);
+  ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;ctx.beginPath();
+  const slice=W/scopeData.length;
+  for(let i=0;i<scopeData.length;i++){const v=scopeData[i]/128;const y=v*H/2;i===0?ctx.moveTo(0,y):ctx.lineTo(i*slice,y);}
+  ctx.stroke();
+}
+drawScope();
+
+// ----- note trigger -----
+function noteOn(freq,keyEl){
+  init();ensureScope();
+  if(actx.state==='suspended')actx.resume();
+  const now=actx.currentTime;
+  const osc=actx.createOscillator();osc.type=wave;osc.frequency.value=freq;
+  const filt=actx.createBiquadFilter();filt.type='lowpass';filt.frequency.value=P('cutoff');filt.Q.value=P('q');
+  const g=actx.createGain();
+  const a=P('attack'),d=P('decay'),s=P('sustain');
+  g.gain.setValueAtTime(0,now);
+  g.gain.linearRampToValueAtTime(1,now+a);
+  g.gain.linearRampToValueAtTime(Math.max(0.0001,s),now+a+d);
+  osc.connect(filt);filt.connect(g);g.connect(master);
+  osc.start(now);
+  if(keyEl)keyEl.classList.add('down');
+  return{osc,g,filt,keyEl};
+}
+function noteOff(v){
+  if(!v)return;const now=actx.currentTime;const r=P('release');
+  v.g.gain.cancelScheduledValues(now);
+  v.g.gain.setValueAtTime(v.g.gain.value,now);
+  v.g.gain.linearRampToValueAtTime(0.0001,now+r);
+  v.osc.stop(now+r+0.02);
+  if(v.keyEl)v.keyEl.classList.remove('down');
+}
+// ----- keyboard -----
+const NOTES=[['C',261.63],['C#',277.18],['D',293.66],['D#',311.13],['E',329.63],['F',349.23],['F#',369.99],['G',392],['G#',415.3],['A',440],['A#',466.16],['B',493.88],['C2',523.25]];
+const keyMap={a:0,w:1,s:2,e:3,d:4,f:5,t:6,g:7,y:8,h:9,u:10,j:11,k:12};
+const keysEl=document.getElementById('keys');const voices={};
+NOTES.forEach((n,i)=>{
+  const k=document.createElement('div');k.className='key'+(n[0].includes('#')?' black':'');k.textContent=n[0];
+  k.onmousedown=()=>{voices['m'+i]=noteOn(n[1],k);};
+  k.onmouseup=k.onmouseleave=()=>{if(voices['m'+i]){noteOff(voices['m'+i]);voices['m'+i]=null;}};
+  keysEl.appendChild(k);n.el=k;
+});
+window.addEventListener('keydown',e=>{const i=keyMap[e.key.toLowerCase()];if(i!=null&&!voices['k'+i]){voices['k'+i]=noteOn(NOTES[i][1],NOTES[i].el);}});
+window.addEventListener('keyup',e=>{const i=keyMap[e.key.toLowerCase()];if(i!=null&&voices['k'+i]){noteOff(voices['k'+i]);voices['k'+i]=null;}});
+drawEnv();
+</script>
+</body>
+</html>

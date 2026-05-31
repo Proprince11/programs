@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hex Editor / File Signature Viewer</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--magic:#fbbf24}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:12px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 12px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+  input[type=file]{font-size:13px}
+  .layout{display:grid;grid-template-columns:1fr 300px;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .hex{font-family:'SF Mono',monospace;font-size:13px;line-height:1.6;overflow:auto;max-height:60vh}
+  .hexrow{display:flex;gap:14px;white-space:pre}
+  .off{color:var(--muted)}
+  .bytes span{padding:0 2px;border-radius:3px;cursor:default}
+  .bytes span:hover{background:#2a3344}
+  .bytes span.magic{background:var(--magic);color:#000;font-weight:700}
+  .ascii{color:#9ae6b4}
+  .ascii span.magic{background:var(--magic);color:#000}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .sig{padding:10px;border-radius:8px;background:#05080f;border:1px solid var(--line);margin-bottom:10px}
+  .sig .t{font-size:18px;font-weight:700;color:var(--magic)}
+  .meta{font-family:monospace;font-size:12px;color:var(--muted);line-height:1.7}
+  .meta b{color:var(--txt)}
+</style>
+</head>
+<body>
+<h1>🔬 Hex Editor / File Signature Viewer</h1>
+<div class="bar">
+  <input type="file" id="file">
+  <button id="sample">Load sample (PNG header)</button>
+  <span class="meta" id="size">0 bytes</span>
+</div>
+<div class="layout">
+  <div class="panel">
+    <div class="hex" id="hex"></div>
+  </div>
+  <div class="panel">
+    <h2>Detected file type</h2>
+    <div class="sig" id="sig"><div class="t">—</div></div>
+    <h2>Magic bytes (highlighted)</h2>
+    <div class="meta" id="magic">Drop or load a file to read its header signature.</div>
+    <h2 style="margin-top:12px">Byte stats</h2>
+    <div class="meta" id="stats"></div>
+    <canvas id="entropy" width="270" height="80" style="margin-top:8px;background:#05080f;border-radius:6px"></canvas>
+    <div class="meta" id="entVal"></div>
+  </div>
+</div>
+<script>
+"use strict";
+// magic signatures: offset 0 unless noted
+const SIGS=[
+  {sig:[0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A],name:'PNG image',ext:'.png',mime:'image/png'},
+  {sig:[0xFF,0xD8,0xFF],name:'JPEG image',ext:'.jpg',mime:'image/jpeg'},
+  {sig:[0x47,0x49,0x46,0x38],name:'GIF image',ext:'.gif',mime:'image/gif'},
+  {sig:[0x25,0x50,0x44,0x46],name:'PDF document',ext:'.pdf',mime:'application/pdf'},
+  {sig:[0x50,0x4B,0x03,0x04],name:'ZIP / Office OOXML / JAR',ext:'.zip',mime:'application/zip'},
+  {sig:[0x1F,0x8B],name:'GZIP archive',ext:'.gz',mime:'application/gzip'},
+  {sig:[0x52,0x61,0x72,0x21],name:'RAR archive',ext:'.rar',mime:'application/vnd.rar'},
+  {sig:[0x7F,0x45,0x4C,0x46],name:'ELF executable',ext:'',mime:'application/x-elf'},
+  {sig:[0x4D,0x5A],name:'Windows PE/DOS executable',ext:'.exe',mime:'application/x-msdownload'},
+  {sig:[0x49,0x44,0x33],name:'MP3 (ID3)',ext:'.mp3',mime:'audio/mpeg'},
+  {sig:[0x52,0x49,0x46,0x46],name:'RIFF (WAV/AVI/WebP)',ext:'.wav',mime:'audio/wav'},
+  {sig:[0x4F,0x67,0x67,0x53],name:'OGG container',ext:'.ogg',mime:'audio/ogg'},
+  {sig:[0x00,0x00,0x01,0x00],name:'ICO icon',ext:'.ico',mime:'image/x-icon'},
+  {sig:[0xEF,0xBB,0xBF],name:'UTF-8 text (BOM)',ext:'.txt',mime:'text/plain'},
+  {sig:[0x7B],name:'JSON / text (starts with {)',ext:'.json',mime:'application/json'}
+];
+let bytes=new Uint8Array();
+function detect(b){
+  for(const s of SIGS){if(b.length>=s.sig.length&&s.sig.every((v,i)=>b[i]===v))return s;}
+  return null;
+}
+function render(){
+  document.getElementById('size').textContent=bytes.length.toLocaleString()+' bytes';
+  const sig=detect(bytes);
+  const magicLen=sig?sig.sig.length:0;
+  // hex dump
+  const hex=document.getElementById('hex');let html='';
+  const rows=Math.min(Math.ceil(bytes.length/16),4096);
+  for(let r=0;r<rows;r++){
+    const off=r*16;
+    let bs='',as='';
+    for(let c=0;c<16;c++){
+      const i=off+c;
+      if(i<bytes.length){const v=bytes[i];const cls=i<magicLen?'magic':'';bs+=`<span class="${cls}">${v.toString(16).padStart(2,'0')}</span>`;bs+=c===7?'  ':' ';
+        const ch=(v>=32&&v<127)?String.fromCharCode(v):'.';as+=`<span class="${cls}">${ch.replace('<','&lt;').replace('>','&gt;').replace('&','&amp;')}</span>`;}
+      else{bs+='   ';as+=' ';}
+    }
+    html+=`<div class="hexrow"><span class="off">${off.toString(16).padStart(8,'0')}</span><span class="bytes">${bs}</span><span class="ascii">${as}</span></div>`;
+  }
+  hex.innerHTML=html||'<span class="off">empty</span>';
+  // signature panel
+  const sigEl=document.getElementById('sig');
+  if(sig){sigEl.innerHTML=`<div class="t">${sig.name}</div><div class="meta">extension <b>${sig.ext||'(none)'}</b><br>MIME <b>${sig.mime}</b></div>`;}
+  else sigEl.innerHTML=`<div class="t" style="color:var(--muted)">Unknown / raw</div><div class="meta">No known magic-byte signature matched the header.</div>`;
+  document.getElementById('magic').innerHTML=sig?sig.sig.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ')+'<br>'+sig.sig.map(b=>(b>=32&&b<127)?String.fromCharCode(b):'·').join(' '):'no signature';
+  // stats + entropy
+  if(bytes.length){
+    const freq=new Array(256).fill(0);bytes.forEach(b=>freq[b]++);
+    let ent=0;for(const f of freq){if(f){const p=f/bytes.length;ent-=p*Math.log2(p);}}
+    const printable=bytes.filter(b=>b>=32&&b<127).length;
+    document.getElementById('stats').innerHTML=`printable: <b>${(printable/bytes.length*100).toFixed(1)}%</b><br>nulls: <b>${freq[0]}</b><br>distinct bytes: <b>${freq.filter(f=>f).length}/256</b>`;
+    drawEntropy(freq);
+    document.getElementById('entVal').innerHTML=`Shannon entropy: <b>${ent.toFixed(3)}</b> bits/byte ${ent>7.5?'(likely compressed/encrypted)':ent<4?'(likely text)':''}`;
+  }
+}
+function drawEntropy(freq){
+  const cv=document.getElementById('entropy'),ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+  const mx=Math.max(...freq,1);for(let i=0;i<256;i++){const h=freq[i]/mx*cv.height;ctx.fillStyle=`hsl(${190-i/256*60} 70% 55%)`;ctx.fillRect(i/256*cv.width,cv.height-h,cv.width/256+0.5,h);}
+}
+document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{bytes=new Uint8Array(r.result);render();};r.readAsArrayBuffer(f);};
+document.getElementById('sample').onclick=()=>{
+  // a minimal valid-looking PNG header + IHDR
+  bytes=new Uint8Array([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x10,0x08,0x06,0x00,0x00,0x00,0x1F,0xF3,0xFF,0x61,0x00,0x00,0x00,0x0A,0x49,0x44,0x41,0x54,0x78,0x9C,0x63,0x00,0x01,0x00,0x00,0x05,0x00,0x01]);
+  render();
+};
+document.getElementById('sample').click();
+</script>
+</body>
+</html>

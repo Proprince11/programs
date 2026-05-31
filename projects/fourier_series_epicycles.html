@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fourier Series Epicycles</title>
+<style>
+  :root{--bg:#0a0e16;--panel:#141a26;--accent:#34d399;--txt:#e6edf3;--muted:#8b94a3;--line:#26303f}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:19px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 280px;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  canvas{width:100%;background:#05080f;border-radius:10px;display:block;cursor:crosshair}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#1c2433;border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;cursor:pointer;margin:4px 4px 0 0;font-size:13px;width:calc(50% - 4px)}
+  button:hover{border-color:var(--accent)}
+  button.active{background:var(--accent);color:#04221a}
+  .hint{font-size:11px;color:var(--muted);line-height:1.6;margin-top:10px}
+</style>
+</head>
+<body>
+<h1>➰ Fourier Series Epicycles — discrete Fourier transform path engine</h1>
+<div class="layout">
+  <div class="panel"><canvas id="cv" height="560"></canvas></div>
+  <div class="panel">
+    <div>
+      <button id="mode" class="active">✏️ Draw mode</button>
+      <button id="run">▶ Animate</button>
+    </div>
+    <label>Number of epicycles <span id="nv">all</span></label>
+    <input type="range" id="terms" min="1" max="200" value="200">
+    <label>Speed <span id="spv">1.0</span>×</label>
+    <input type="range" id="speed" min="0.1" max="4" step="0.1" value="1">
+    <div>
+      <button id="presetSquare">□ Square</button>
+      <button id="presetStar">★ Star</button>
+    </div>
+    <button id="clear" style="width:100%">Clear drawing</button>
+    <div class="hint">Draw any closed shape with the mouse. The engine computes the Discrete Fourier Transform of your path's complex points, then reconstructs it as a chain of rotating epicycles. Reduce the term count to watch the approximation degrade — Gibbs phenomenon and all.</div>
+    <div class="hint" id="stat"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+function resize(){cv.width=cv.clientWidth;}
+window.addEventListener('resize',()=>{resize();});
+let drawn=[],fourier=[],mode='draw',running=false,time=0,trail=[];
+// DFT: input array of {re,im}
+function dft(x){
+  const N=x.length,X=[];
+  for(let k=0;k<N;k++){
+    let re=0,im=0;
+    for(let n=0;n<N;n++){const phi=(2*Math.PI*k*n)/N;re+=x[n].re*Math.cos(phi)+x[n].im*Math.sin(phi);im+=-x[n].re*Math.sin(phi)+x[n].im*Math.cos(phi);}
+    re/=N;im/=N;
+    X.push({re,im,freq:k,amp:Math.hypot(re,im),phase:Math.atan2(im,re)});
+  }
+  return X;
+}
+function computeFourier(){
+  if(drawn.length<2)return;
+  // resample to power-ish count for smoothness
+  const step=Math.max(1,Math.floor(drawn.length/360));
+  const pts=[];for(let i=0;i<drawn.length;i+=step)pts.push({re:drawn[i].x-cv.width/2,im:drawn[i].y-cv.height/2});
+  fourier=dft(pts);
+  fourier.sort((a,b)=>b.amp-a.amp);
+  document.getElementById('terms').max=fourier.length;
+  document.getElementById('terms').value=fourier.length;
+  document.getElementById('stat').textContent=`Path samples: ${pts.length} · Fourier coefficients: ${fourier.length}`;
+}
+// drawing
+let drawing=false;
+cv.addEventListener('mousedown',e=>{if(mode!=='draw')return;drawing=true;drawn=[];trail=[];const r=cv.getBoundingClientRect();drawn.push({x:e.clientX-r.left,y:e.clientY-r.top});});
+cv.addEventListener('mousemove',e=>{if(!drawing)return;const r=cv.getBoundingClientRect();drawn.push({x:e.clientX-r.left,y:e.clientY-r.top});drawStatic();});
+window.addEventListener('mouseup',()=>{if(drawing){drawing=false;computeFourier();}});
+function drawStatic(){ctx.fillStyle='#05080f';ctx.fillRect(0,0,cv.width,cv.height);ctx.strokeStyle='#34d399';ctx.lineWidth=2;ctx.beginPath();drawn.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();}
+function epicycles(cx,cy,rotation,coeffs,n){
+  let x=cx,y=cy;
+  for(let i=0;i<n;i++){
+    const c=coeffs[i];const prevx=x,prevy=y;
+    const freq=c.freq,radius=c.amp,phase=c.phase;
+    x+=radius*Math.cos(freq*rotation+phase);
+    y+=radius*Math.sin(freq*rotation+phase);
+    ctx.strokeStyle='rgba(120,160,220,0.35)';ctx.beginPath();ctx.arc(prevx,prevy,radius,0,2*Math.PI);ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.beginPath();ctx.moveTo(prevx,prevy);ctx.lineTo(x,y);ctx.stroke();
+  }
+  return{x,y};
+}
+function loop(){
+  requestAnimationFrame(loop);
+  if(!running||fourier.length===0)return;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,cv.width,cv.height);
+  const n=Math.min(+document.getElementById('terms').value,fourier.length);
+  const tip=epicycles(cv.width/2,cv.height/2,time,fourier,n);
+  trail.unshift({x:tip.x,y:tip.y});if(trail.length>2000)trail.pop();
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.beginPath();trail.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
+  const dt=(2*Math.PI)/ (fourier.length||1) * (+document.getElementById('speed').value);
+  time+=dt;
+  if(time>2*Math.PI){time=0;trail=[];}
+}
+// controls
+document.getElementById('mode').onclick=function(){mode='draw';this.classList.add('active');document.getElementById('run').classList.remove('active');running=false;drawStatic();};
+document.getElementById('run').onclick=function(){if(fourier.length===0)computeFourier();mode='run';running=true;time=0;trail=[];this.classList.add('active');document.getElementById('mode').classList.remove('active');};
+document.getElementById('clear').onclick=()=>{drawn=[];fourier=[];trail=[];ctx.fillStyle='#05080f';ctx.fillRect(0,0,cv.width,cv.height);};
+document.getElementById('terms').oninput=function(){document.getElementById('nv').textContent=this.value;};
+document.getElementById('speed').oninput=function(){document.getElementById('spv').textContent=(+this.value).toFixed(1);};
+function preset(pts){drawn=pts;computeFourier();document.getElementById('run').click();}
+document.getElementById('presetSquare').onclick=()=>{const p=[],s=180,cx=cv.width/2,cy=cv.height/2;for(let i=0;i<=40;i++)p.push({x:cx-s+i/40*2*s,y:cy-s});for(let i=0;i<=40;i++)p.push({x:cx+s,y:cy-s+i/40*2*s});for(let i=0;i<=40;i++)p.push({x:cx+s-i/40*2*s,y:cy+s});for(let i=0;i<=40;i++)p.push({x:cx-s,y:cy+s-i/40*2*s});preset(p);};
+document.getElementById('presetStar').onclick=()=>{const p=[],cx=cv.width/2,cy=cv.height/2;for(let i=0;i<=200;i++){const a=i/200*Math.PI*2*5;const r=120+90*Math.cos(a*2.5);p.push({x:cx+Math.cos(i/200*Math.PI*2)*r,y:cy+Math.sin(i/200*Math.PI*2)*r});}preset(p);};
+resize();ctx.fillStyle='#05080f';ctx.fillRect(0,0,cv.width,cv.height);
+ctx.fillStyle='#8b94a3';ctx.font='15px system-ui';ctx.textAlign='center';ctx.fillText('Draw a closed shape here, then press Animate ▶',cv.width/2,cv.height/2);
+loop();
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Regex Engine Debugger</title>
+<style>
+  :root{--panel:#11151f;--accent:#a78bfa;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a;--hl:#fbbf24}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .regexbar{display:flex;align-items:center;gap:8px;font-family:monospace;font-size:16px}
+  .regexbar .slash{color:var(--muted)}
+  #pattern{flex:1;background:#05080f;border:1px solid var(--line);color:#f0abfc;padding:10px;border-radius:8px;font-family:monospace;font-size:15px}
+  #flags{width:80px;background:#05080f;border:1px solid var(--line);color:var(--accent);padding:10px;border-radius:8px;font-family:monospace}
+  textarea{width:100%;height:160px;background:#05080f;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:12px;font-family:monospace;font-size:13px;resize:vertical;line-height:1.6}
+  .highlighted{white-space:pre-wrap;word-break:break-word;font-family:monospace;font-size:13px;line-height:1.8;padding:12px;background:#05080f;border-radius:8px;border:1px solid var(--line);min-height:80px}
+  mark{background:var(--hl);color:#000;border-radius:3px;padding:0 2px}
+  mark.alt{background:#fb923c}
+  .layout{display:grid;grid-template-columns:1fr 320px;gap:14px}
+  table{width:100%;border-collapse:collapse;font-family:monospace;font-size:12px}
+  td,th{border-bottom:1px solid var(--line);padding:5px;text-align:left}
+  th{color:var(--muted)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:10px;background:#1f2733;font-size:11px;margin:2px;cursor:pointer;font-family:monospace}
+  .chip:hover{background:var(--accent);color:#150b2b}
+  .status{font-size:12px;color:var(--muted);font-family:monospace}
+  .err{color:#f87171}
+</style>
+</head>
+<body>
+<h1>🔍 Regex Engine Debugger</h1>
+<div class="panel">
+  <div class="regexbar"><span class="slash">/</span><input id="pattern" value="(\w+)@(\w+)\.(\w+)" spellcheck="false"><span class="slash">/</span><input id="flags" value="g" spellcheck="false"></div>
+  <div style="margin-top:8px">
+    <span class="chip" data-p="\\d{3}-\\d{4}">phone</span>
+    <span class="chip" data-p="(?<year>\\d{4})-(\\d{2})-(\\d{2})">ISO date</span>
+    <span class="chip" data-p="#[0-9a-fA-F]{6}\\b">hex color</span>
+    <span class="chip" data-p="https?://[^\\s]+">url</span>
+    <span class="chip" data-p="\\b[A-Z][a-z]+\\b">PascalWords</span>
+    <span class="chip" data-p="(\\w+)\\s+\\1">repeated word</span>
+  </div>
+</div>
+<div class="layout">
+  <div>
+    <div class="panel">
+      <h2 style="font-size:13px;color:var(--muted);margin-bottom:8px">TEST STRING</h2>
+      <textarea id="text" spellcheck="false">Contact ada@example.com or grace@navy.mil for details.
+Order #A1b2C3 placed 2024-03-15. Visit https://example.org/page now.
+The the quick brown fox. Phone 555-1234.</textarea>
+      <h2 style="font-size:13px;color:var(--muted);margin:12px 0 8px">MATCHES HIGHLIGHTED</h2>
+      <div class="highlighted" id="output"></div>
+      <div class="status" id="status" style="margin-top:8px"></div>
+    </div>
+  </div>
+  <div>
+    <div class="panel">
+      <h2 style="font-size:13px;color:var(--muted);margin-bottom:8px">MATCH GROUPS</h2>
+      <div id="groups"></div>
+    </div>
+    <div class="panel">
+      <h2 style="font-size:13px;color:var(--muted);margin-bottom:8px">TOKEN BREAKDOWN</h2>
+      <table id="tokens"><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+// naive regex token explainer
+const TOKENS=[
+  [/^\\d/,'\\d','digit [0-9]'],[/^\\w/,'\\w','word char [A-Za-z0-9_]'],[/^\\s/,'\\s','whitespace'],
+  [/^\\b/,'\\b','word boundary'],[/^\\D/,'\\D','non-digit'],[/^\\W/,'\\W','non-word'],[/^\\S/,'\\S','non-space'],
+  [/^\\\d/,'\\n','backreference'],
+  [/^\(\?<[^>]+>/,'(?<name>','named capture group'],[/^\(\?:/,'(?:','non-capturing group'],[/^\(\?=/,'(?=','positive lookahead'],
+  [/^\(\?!/,'(?!','negative lookahead'],[/^\(/,'(','start capture group'],[/^\)/,')','end group'],
+  [/^\[\^[^\]]*\]/,'[^...]','negated char class'],[/^\[[^\]]*\]/,'[...]','character class'],
+  [/^\{\d+,?\d*\}/,'{n,m}','quantifier range'],[/^\+/,'+','one or more'],[/^\*/,'*','zero or more'],
+  [/^\?/,'?','optional / lazy'],[/^\./,'.','any char'],[/^\^/,'^','start anchor'],[/^\$/,'$','end anchor'],
+  [/^\|/,'|','alternation'],[/^\\./,'\\x','escaped literal']
+];
+function explain(pattern){
+  const rows=[];let i=0;
+  while(i<pattern.length){
+    const rest=pattern.slice(i);let matched=false;
+    for(const[re,sym,desc] of TOKENS){const m=rest.match(re);if(m){rows.push([esc(m[0]),desc]);i+=m[0].length;matched=true;break;}}
+    if(!matched){rows.push([esc(pattern[i]),'literal "'+esc(pattern[i])+'"']);i++;}
+  }
+  return rows;
+}
+function run(){
+  const pattern=document.getElementById('pattern').value;
+  const flags=document.getElementById('flags').value;
+  const text=document.getElementById('text').value;
+  const status=document.getElementById('status');
+  let re;
+  try{re=new RegExp(pattern,flags.includes('g')?flags:flags+'g');}
+  catch(e){status.innerHTML='<span class="err">Invalid regex: '+esc(e.message)+'</span>';document.getElementById('output').textContent=text;return;}
+  // highlight
+  let out='',last=0,count=0,groupsHtml='',alt=false;
+  const matches=[...text.matchAll(re)];
+  for(const m of matches){
+    if(m.index===re.lastIndex&&m[0]===''){continue;}
+    out+=esc(text.slice(last,m.index));
+    out+=`<mark class="${alt?'alt':''}" title="match ${count+1}">${esc(m[0])||'∅'}</mark>`;
+    alt=!alt;last=m.index+m[0].length;count++;
+    let g='';m.forEach((grp,gi)=>{if(gi>0)g+=`<div>group ${gi}: <b style="color:var(--accent)">${grp===undefined?'<undefined>':esc(grp)}</b></div>`;});
+    if(m.groups)for(const k in m.groups)g+=`<div>&lt;${k}&gt;: <b style="color:#34d399">${esc(m.groups[k]||'')}</b></div>`;
+    groupsHtml+=`<div style="padding:6px 0;border-bottom:1px solid var(--line)"><span style="color:var(--muted)">@${m.index}</span> "${esc(m[0])}"${g}</div>`;
+  }
+  out+=esc(text.slice(last));
+  document.getElementById('output').innerHTML=out||esc(text);
+  document.getElementById('groups').innerHTML=groupsHtml||'<span style="color:var(--muted)">no matches</span>';
+  status.innerHTML=`${count} match${count!==1?'es':''} found`;
+  // tokens
+  const rows=explain(pattern);
+  document.getElementById('tokens').querySelector('tbody').innerHTML='<tr><th>token</th><th>meaning</th></tr>'+rows.map(r=>`<tr><td style="color:#f0abfc">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+}
+['pattern','flags','text'].forEach(id=>document.getElementById(id).oninput=run);
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.getElementById('pattern').value=c.dataset.p;run();});
+run();
+</script>
+</body>
+</html>

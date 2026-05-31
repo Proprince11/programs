@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSON Schema Validator</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--ok:#4ade80;--err:#f87171;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:1fr 1fr 380px;gap:12px;height:calc(100vh - 70px)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;overflow:hidden}
+  .panel h2{font-size:13px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between}
+  textarea{flex:1;background:#05080f;color:#9ae6b4;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:'SF Mono',monospace;font-size:12px;resize:none;line-height:1.5}
+  .results{flex:1;overflow:auto;font-family:monospace;font-size:12px}
+  .res{padding:8px 10px;border-radius:7px;margin-bottom:6px;line-height:1.5}
+  .res.ok{background:#0f2a1a;border-left:3px solid var(--ok)}
+  .res.err{background:#2a1216;border-left:3px solid var(--err)}
+  .path{color:var(--accent)}
+  .summary{padding:10px;border-radius:8px;margin-bottom:10px;font-weight:600;text-align:center}
+  .summary.ok{background:#0f2a1a;color:var(--ok)}.summary.err{background:#2a1216;color:var(--err)}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>✅ JSON Schema Validator <span style="font-size:12px;color:var(--muted)">— subset of JSON Schema Draft-07</span></h1>
+<div class="layout">
+  <div class="panel">
+    <h2>Schema <button id="loadEx">load example</button></h2>
+    <textarea id="schema" spellcheck="false"></textarea>
+  </div>
+  <div class="panel">
+    <h2>Data instance</h2>
+    <textarea id="data" spellcheck="false"></textarea>
+  </div>
+  <div class="panel">
+    <h2>Validation report</h2>
+    <div id="summary"></div>
+    <div class="results" id="results"></div>
+  </div>
+</div>
+<script>
+"use strict";
+// minimal JSON-Schema validator (Draft-07 subset)
+function typeOf(v){if(v===null)return'null';if(Array.isArray(v))return'array';return typeof v==='number'?(Number.isInteger(v)?'integer':'number'):typeof v;}
+function matchType(t,v){const a=typeOf(v);if(t==='number')return a==='number'||a==='integer';if(t==='integer')return a==='integer';return a===t;}
+function validate(schema,data,path,errors){
+  if(schema===true)return;if(schema===false){errors.push({path,msg:'schema is false — nothing valid'});return;}
+  // type
+  if(schema.type){const types=Array.isArray(schema.type)?schema.type:[schema.type];if(!types.some(t=>matchType(t,data))){errors.push({path,msg:`expected type ${types.join('|')}, got ${typeOf(data)}`});return;}}
+  // enum
+  if(schema.enum&&!schema.enum.some(e=>JSON.stringify(e)===JSON.stringify(data)))errors.push({path,msg:`value not in enum [${schema.enum.map(x=>JSON.stringify(x)).join(', ')}]`});
+  if(schema.const!==undefined&&JSON.stringify(schema.const)!==JSON.stringify(data))errors.push({path,msg:`must equal const ${JSON.stringify(schema.const)}`});
+  const t=typeOf(data);
+  // numbers
+  if(t==='number'||t==='integer'){
+    if(schema.minimum!==undefined&&data<schema.minimum)errors.push({path,msg:`${data} < minimum ${schema.minimum}`});
+    if(schema.maximum!==undefined&&data>schema.maximum)errors.push({path,msg:`${data} > maximum ${schema.maximum}`});
+    if(schema.exclusiveMinimum!==undefined&&data<=schema.exclusiveMinimum)errors.push({path,msg:`${data} <= exclusiveMinimum`});
+    if(schema.multipleOf!==undefined&&Math.abs(data%schema.multipleOf)>1e-9)errors.push({path,msg:`${data} not multiple of ${schema.multipleOf}`});
+  }
+  // strings
+  if(t==='string'){
+    if(schema.minLength!==undefined&&data.length<schema.minLength)errors.push({path,msg:`length ${data.length} < minLength ${schema.minLength}`});
+    if(schema.maxLength!==undefined&&data.length>schema.maxLength)errors.push({path,msg:`length ${data.length} > maxLength ${schema.maxLength}`});
+    if(schema.pattern&&!new RegExp(schema.pattern).test(data))errors.push({path,msg:`does not match pattern /${schema.pattern}/`});
+    if(schema.format==='email'&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data))errors.push({path,msg:`invalid email format`});
+  }
+  // arrays
+  if(t==='array'){
+    if(schema.minItems!==undefined&&data.length<schema.minItems)errors.push({path,msg:`${data.length} items < minItems ${schema.minItems}`});
+    if(schema.maxItems!==undefined&&data.length>schema.maxItems)errors.push({path,msg:`${data.length} items > maxItems ${schema.maxItems}`});
+    if(schema.uniqueItems){const seen=new Set();data.forEach(x=>seen.add(JSON.stringify(x)));if(seen.size!==data.length)errors.push({path,msg:`items not unique`});}
+    if(schema.items)data.forEach((item,i)=>validate(schema.items,item,path+'['+i+']',errors));
+  }
+  // objects
+  if(t==='object'){
+    if(schema.required)schema.required.forEach(k=>{if(!(k in data))errors.push({path,msg:`missing required property "${k}"`});});
+    if(schema.properties)for(const k in schema.properties){if(k in data)validate(schema.properties[k],data[k],path+'.'+k,errors);}
+    if(schema.additionalProperties===false&&schema.properties){for(const k in data)if(!(k in schema.properties))errors.push({path:path+'.'+k,msg:`additional property not allowed`});}
+    if(schema.minProperties!==undefined&&Object.keys(data).length<schema.minProperties)errors.push({path,msg:`too few properties`});
+  }
+}
+const EX_SCHEMA={
+  type:'object',required:['id','name','email','tags'],additionalProperties:false,
+  properties:{
+    id:{type:'integer',minimum:1},
+    name:{type:'string',minLength:2,maxLength:50},
+    email:{type:'string',format:'email'},
+    age:{type:'integer',minimum:0,maximum:120},
+    role:{type:'string',enum:['admin','user','guest']},
+    tags:{type:'array',items:{type:'string'},minItems:1,uniqueItems:true}
+  }
+};
+const EX_DATA={id:42,name:'Ada Lovelace',email:'ada@example.com',age:36,role:'admin',tags:['math','engine']};
+function run(){
+  const sEl=document.getElementById('schema'),dEl=document.getElementById('data');
+  const res=document.getElementById('results'),sum=document.getElementById('summary');
+  let schema,data;
+  try{schema=JSON.parse(sEl.value);}catch(e){sum.className='summary err';sum.textContent='Schema parse error: '+e.message;res.innerHTML='';return;}
+  try{data=JSON.parse(dEl.value);}catch(e){sum.className='summary err';sum.textContent='Data parse error: '+e.message;res.innerHTML='';return;}
+  const errors=[];validate(schema,data,'$',errors);
+  if(errors.length===0){sum.className='summary ok';sum.textContent='✓ VALID — instance conforms to schema';res.innerHTML='<div class="res ok">All constraints satisfied across the document tree.</div>';}
+  else{sum.className='summary err';sum.textContent=`✗ INVALID — ${errors.length} violation${errors.length>1?'s':''}`;res.innerHTML=errors.map(e=>`<div class="res err"><span class="path">${e.path}</span><br>${e.msg}</div>`).join('');}
+}
+document.getElementById('loadEx').onclick=()=>{document.getElementById('schema').value=JSON.stringify(EX_SCHEMA,null,2);document.getElementById('data').value=JSON.stringify(EX_DATA,null,2);run();};
+document.getElementById('schema').oninput=run;document.getElementById('data').oninput=run;
+document.getElementById('loadEx').click();
+</script>
+</body>
+</html>

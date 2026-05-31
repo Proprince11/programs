@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hash Collision Sandbox</title>
+<style>
+  :root{--panel:#11151f;--accent:#a78bfa;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1000px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+  input,select{background:#05080f;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px;font-family:monospace;font-size:14px;width:100%}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .hashout{font-family:monospace;font-size:13px;word-break:break-all;background:#0a0e16;padding:10px;border-radius:8px;margin-top:6px;line-height:1.6}
+  .bits{display:flex;flex-wrap:wrap;gap:2px;margin-top:8px}
+  .bit{width:11px;height:11px;border-radius:2px;background:#1a212e}
+  .bit.on{background:var(--accent)}
+  .bit.diff{background:#f87171;box-shadow:0 0 4px #f87171}
+  .stat{font-size:13px;font-family:monospace;color:var(--muted);margin-top:8px}
+  .big{font-size:28px;font-weight:700;color:var(--accent)}
+  canvas{width:100%;background:#05080f;border-radius:8px;display:block;margin-top:8px}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px 12px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>#️⃣ Hash Collision Sandbox <span style="font-size:12px;color:var(--muted)">— avalanche effect &amp; the birthday paradox</span></h1>
+<div class="panel">
+  <h2>Algorithm</h2>
+  <select id="algo"><option value="fnv">FNV-1a (32-bit)</option><option value="djb2">djb2 (32-bit)</option><option value="sha256">SHA-256 (Web Crypto)</option><option value="weak">Weak demo (8-bit, collides easily)</option></select>
+</div>
+<div class="panel">
+  <h2>Avalanche comparison — change one character, watch the bits flip</h2>
+  <div class="two">
+    <div><input id="a" value="hello world"><div class="hashout" id="ha"></div><div class="bits" id="ba"></div></div>
+    <div><input id="b" value="hello worle"><div class="hashout" id="hb"></div><div class="bits" id="bb"></div></div>
+  </div>
+  <div class="stat">Bits differing: <span class="big" id="avalanche">0</span> / <span id="totalbits">32</span> &nbsp;(<span id="pct">0</span>% — ideal ≈ 50%)</div>
+</div>
+<div class="panel">
+  <h2>Collision finder — birthday paradox in a small hash space</h2>
+  <button id="findCollision">Find a collision (random strings)</button>
+  <span id="collStatus" style="margin-left:10px;font-family:monospace;font-size:13px;color:var(--muted)"></span>
+  <canvas id="space" height="120"></canvas>
+  <div class="stat" id="collInfo"></div>
+</div>
+<script>
+"use strict";
+// 32-bit hashers
+function fnv1a(str){let h=0x811c9dc5;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193);}return h>>>0;}
+function djb2(str){let h=5381;for(let i=0;i<str.length;i++)h=(Math.imul(h,33)^str.charCodeAt(i))>>>0;return h>>>0;}
+function weak8(str){let h=0;for(let i=0;i<str.length;i++)h=(h+str.charCodeAt(i)*7)&0xff;return h;}
+async function sha256(str){const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));return new Uint8Array(buf);}
+function bitsToBoolArr(bytes){const out=[];for(const b of bytes)for(let i=7;i>=0;i--)out.push((b>>i)&1);return out;}
+function u32bytes(n){return[n>>>24&255,n>>>16&255,n>>>8&255,n&255];}
+async function hashBits(str){
+  const algo=document.getElementById('algo').value;
+  if(algo==='sha256'){const b=await sha256(str);return{hex:[...b].map(x=>x.toString(16).padStart(2,'0')).join(''),bits:bitsToBoolArr(b)};}
+  if(algo==='weak'){const h=weak8(str);return{hex:h.toString(16).padStart(2,'0'),bits:bitsToBoolArr([h])};}
+  const h=algo==='fnv'?fnv1a(str):djb2(str);return{hex:h.toString(16).padStart(8,'0'),bits:bitsToBoolArr(u32bytes(h))};}
+async function update(){
+  const ra=await hashBits(document.getElementById('a').value);
+  const rb=await hashBits(document.getElementById('b').value);
+  document.getElementById('ha').textContent='0x'+ra.hex;
+  document.getElementById('hb').textContent='0x'+rb.hex;
+  let diff=0;
+  const ba=document.getElementById('ba'),bb=document.getElementById('bb');ba.innerHTML='';bb.innerHTML='';
+  ra.bits.forEach((bit,i)=>{const d=bit!==rb.bits[i];if(d)diff++;
+    const e1=document.createElement('div');e1.className='bit'+(bit?' on':'')+(d?' diff':'');ba.appendChild(e1);
+    const e2=document.createElement('div');e2.className='bit'+(rb.bits[i]?' on':'')+(d?' diff':'');bb.appendChild(e2);});
+  document.getElementById('avalanche').textContent=diff;
+  document.getElementById('totalbits').textContent=ra.bits.length;
+  document.getElementById('pct').textContent=(diff/ra.bits.length*100).toFixed(1);
+}
+['a','b','algo'].forEach(id=>document.getElementById(id).oninput=update);
+document.getElementById('algo').onchange=()=>{update();drawSpace([]);};
+// collision finder using weak hash for demonstration
+const spaceCv=document.getElementById('space');
+function smallHash(str){return weak8(str);} // 256 buckets
+function drawSpace(hits){
+  const ctx=spaceCv.getContext('2d');spaceCv.width=spaceCv.clientWidth;const W=spaceCv.width,H=spaceCv.height;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  const cols=64,rows=4,cw=W/cols,ch=H/rows;
+  for(let i=0;i<256;i++){const x=(i%cols)*cw,y=((i/cols)|0)*ch;const c=hits[i]||0;ctx.fillStyle=c===0?'#161c28':c===1?'#3b82f6':'#f87171';ctx.fillRect(x+1,y+1,cw-2,ch-2);}
+}
+document.getElementById('findCollision').onclick=()=>{
+  const seen={},hits=new Array(256).fill(0);let attempts=0,collision=null;
+  while(attempts<20000){const s=Math.random().toString(36).slice(2,10);const h=smallHash(s);hits[h]++;attempts++;if(seen[h]&&seen[h]!==s){collision={a:seen[h],b:s,h};break;}seen[h]=s;}
+  drawSpace(hits);
+  if(collision){document.getElementById('collStatus').innerHTML=`<span style="color:#f87171">Collision after ${attempts} tries!</span>`;
+    document.getElementById('collInfo').innerHTML=`weakHash("${collision.a}") == weakHash("${collision.b}") == ${collision.h}<br>In a 256-slot space, the birthday paradox predicts a collision after ≈ √256 ≈ 20 random items. Red = collided bucket, blue = single hit.`;}
+  else document.getElementById('collStatus').textContent='no collision in '+attempts+' tries (unlikely!)';
+};
+update();drawSpace([]);
+</script>
+</body>
+</html>

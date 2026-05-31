@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Port Scan Log Analyzer</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--danger:#f87171;--warn:#fbbf24;--ok:#4ade80;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#070a11;color:var(--txt);font-family:system-ui,sans-serif;padding:16px;max-width:1150px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:380px 1fr;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  textarea{width:100%;height:280px;background:#05080f;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#9ae6b4;resize:vertical;line-height:1.5}
+  button{background:#1a212e;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:8px 12px;cursor:pointer;font-size:13px;margin:6px 4px 0 0}
+  button:hover{border-color:var(--accent)}
+  .alert{padding:10px;border-radius:8px;margin-bottom:8px;border-left:4px solid;font-size:13px}
+  .alert.crit{background:#2a1216;border-color:var(--danger)}
+  .alert.warn{background:#231e10;border-color:var(--warn)}
+  .alert.info{background:#0f1e2a;border-color:var(--accent)}
+  .alert b{font-family:monospace}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+  .card{background:#05080f;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}
+  .card .v{font-size:22px;font-weight:700}.card .l{font-size:10px;color:var(--muted);text-transform:uppercase}
+  canvas{width:100%;background:#05080f;border-radius:8px;display:block;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>📡 Port Scan Log Analyzer <span style="font-size:12px;color:var(--muted)">— detect horizontal &amp; vertical scans</span></h1>
+<div class="layout">
+  <div class="panel">
+    <h2>Connection log (src · dst · port · flag)</h2>
+    <textarea id="log" spellcheck="false"></textarea>
+    <button id="analyze">🔍 Analyze</button>
+    <button id="genBenign">Sample: benign</button>
+    <button id="genScan">Sample: attack</button>
+  </div>
+  <div class="panel">
+    <div class="summary" id="summary"></div>
+    <h2>Detected threats</h2>
+    <div id="alerts"></div>
+    <h2 style="margin-top:12px">Activity heatmap (src IP × time)</h2>
+    <canvas id="heat" height="140"></canvas>
+  </div>
+</div>
+<script>
+"use strict";
+// thresholds
+const VERTICAL_PORTS=15;   // many ports on one host from one src
+const HORIZONTAL_HOSTS=10; // same port across many hosts
+const SYN_RATIO=0.7;       // proportion of SYN w/o ACK -> stealth
+function genBenign(){
+  const lines=[];const srcs=['10.0.0.5','10.0.0.6','10.0.0.7'];const ports=[80,443,22,3306];
+  for(let i=0;i<120;i++){const t=(i*3).toString();lines.push(`${t} ${srcs[i%3]} 10.0.1.20 ${ports[i%4]} ${Math.random()<0.9?'ESTABLISHED':'SYN'}`);}
+  return lines.join('\n');
+}
+function genScan(){
+  const lines=[];let t=0;
+  // vertical scan: attacker hits many ports on one host
+  for(let p=1;p<=60;p++){lines.push(`${t++} 45.66.13.9 10.0.1.20 ${p} SYN`);}
+  // horizontal scan: attacker hits port 22 across subnet
+  for(let h=2;h<40;h++){lines.push(`${t++} 45.66.13.9 10.0.1.${h} 22 SYN`);}
+  // some benign noise
+  for(let i=0;i<30;i++)lines.push(`${t++} 10.0.0.5 10.0.1.20 443 ESTABLISHED`);
+  return lines.join('\n');
+}
+function parse(text){
+  return text.trim().split('\n').map(l=>{const p=l.trim().split(/\s+/);return{t:+p[0],src:p[1],dst:p[2],port:+p[3],flag:(p[4]||'').toUpperCase()};}).filter(e=>e.src&&e.dst);
+}
+function analyze(){
+  const events=parse(document.getElementById('log').value);
+  const bySrc={};
+  events.forEach(e=>{(bySrc[e.src]=bySrc[e.src]||[]).push(e);});
+  const alerts=[];
+  let synCount=0;
+  for(const src in bySrc){
+    const ev=bySrc[src];
+    const portsPerHost={},hostsPerPort={};
+    let synAll=0;
+    ev.forEach(e=>{
+      (portsPerHost[e.dst]=portsPerHost[e.dst]||new Set()).add(e.port);
+      (hostsPerPort[e.port]=hostsPerPort[e.port]||new Set()).add(e.dst);
+      if(e.flag==='SYN'){synAll++;synCount++;}
+    });
+    // vertical scan
+    for(const dst in portsPerHost){if(portsPerHost[dst].size>=VERTICAL_PORTS){alerts.push({sev:'crit',msg:`VERTICAL SCAN: <b>${src}</b> probed <b>${portsPerHost[dst].size}</b> distinct ports on <b>${dst}</b> — port sweep of a single host.`});}}
+    // horizontal scan
+    for(const port in hostsPerPort){if(hostsPerPort[port].size>=HORIZONTAL_HOSTS){alerts.push({sev:'crit',msg:`HORIZONTAL SCAN: <b>${src}</b> probed port <b>${port}</b> across <b>${hostsPerPort[port].size}</b> hosts — service sweep across the subnet.`});}}
+    // stealth SYN
+    if(ev.length>20&&synAll/ev.length>=SYN_RATIO){alerts.push({sev:'warn',msg:`STEALTH (SYN) SCAN: <b>${src}</b> sent ${synAll}/${ev.length} half-open SYN connections (${(synAll/ev.length*100).toFixed(0)}%) — likely a half-open nmap -sS scan.`});}
+  }
+  if(alerts.length===0)alerts.push({sev:'info',msg:'No scanning patterns detected. Traffic appears within normal thresholds.'});
+  // summary
+  const uniqueSrc=Object.keys(bySrc).length;
+  const uniquePorts=new Set(events.map(e=>e.port)).size;
+  document.getElementById('summary').innerHTML=
+    card(events.length,'log entries','#e6edf3')+
+    card(uniqueSrc,'source IPs','#60a5fa')+
+    card(uniquePorts,'ports seen','#fbbf24')+
+    card(alerts.filter(a=>a.sev==='crit').length,'critical alerts',alerts.some(a=>a.sev==='crit')?'#f87171':'#4ade80');
+  document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.sev}">${a.sev==='crit'?'🚨':a.sev==='warn'?'⚠️':'✅'} ${a.msg}</div>`).join('');
+  drawHeat(events,bySrc);
+}
+function card(v,l,c){return `<div class="card"><div class="v" style="color:${c}">${v}</div><div class="l">${l}</div></div>`;}
+function drawHeat(events,bySrc){
+  const cv=document.getElementById('heat'),ctx=cv.getContext('2d');cv.width=cv.clientWidth;const W=cv.width,H=cv.height;
+  ctx.fillStyle='#05080f';ctx.fillRect(0,0,W,H);
+  const srcs=Object.keys(bySrc).slice(0,12);if(!srcs.length)return;
+  const maxT=Math.max(...events.map(e=>e.t),1);const bins=80;const rowH=H/srcs.length;
+  const heat=srcs.map(()=>new Array(bins).fill(0));
+  events.forEach(e=>{const r=srcs.indexOf(e.src);if(r<0)return;const b=Math.min(bins-1,Math.floor(e.t/maxT*(bins-1)));heat[r][b]++;});
+  const mx=Math.max(...heat.flat(),1);
+  srcs.forEach((s,r)=>{for(let b=0;b<bins;b++){const v=heat[r][b]/mx;if(v>0){ctx.fillStyle=`hsl(${190-v*190} 80% ${30+v*30}%)`;ctx.fillRect(b*W/bins,r*rowH,W/bins+1,rowH-1);}}
+    ctx.fillStyle='#8b94a3';ctx.font='9px monospace';ctx.fillText(s,4,r*rowH+rowH/2+3);});
+}
+document.getElementById('analyze').onclick=analyze;
+document.getElementById('genBenign').onclick=()=>{document.getElementById('log').value=genBenign();analyze();};
+document.getElementById('genScan').onclick=()=>{document.getElementById('log').value=genScan();analyze();};
+document.getElementById('log').value=genScan();analyze();
+</script>
+</body>
+</html>

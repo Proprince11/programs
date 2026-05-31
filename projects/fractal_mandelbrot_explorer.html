@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fractal Mandelbrot Explorer</title>
+<style>
+  :root{--panel:#11151f;--accent:#22d3ee;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #ui{position:fixed;top:12px;left:12px;background:rgba(17,21,31,0.92);border:1px solid var(--line);border-radius:12px;padding:14px;width:250px;backdrop-filter:blur(6px);z-index:10}
+  h1{font-size:15px;margin-bottom:10px}
+  label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin:8px 0 3px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  select,button{background:#1a1f2b;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:6px;font-size:12px;width:100%;margin-top:6px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  .row{display:flex;gap:6px}.row button{margin-top:6px}
+  .stat{font-size:11px;color:var(--muted);margin-top:8px;font-family:monospace;line-height:1.5}
+  canvas{display:block;cursor:crosshair}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>🌀 Mandelbrot / Julia Explorer</h1>
+  <select id="fractal"><option value="mandel">Mandelbrot Set</option><option value="julia">Julia Set</option></select>
+  <label>Max iterations <span id="itv">300</span></label><input type="range" id="iter" min="50" max="2000" step="10" value="300">
+  <label>Palette</label>
+  <select id="palette"><option>Cosmic</option><option>Fire</option><option>Ocean</option><option>Grayscale</option><option>Psychedelic</option></select>
+  <div id="juliaCtl" style="display:none">
+    <label>Julia cRe <span id="crv">-0.70</span></label><input type="range" id="cre" min="-2" max="2" step="0.001" value="-0.7">
+    <label>Julia cIm <span id="civ">0.27</span></label><input type="range" id="cim" min="-2" max="2" step="0.001" value="0.27">
+  </div>
+  <div class="row"><button id="zoomIn">＋ Zoom</button><button id="zoomOut">－ Zoom</button></div>
+  <div class="row"><button id="reset">⟲ Reset</button><button id="save">⬇ PNG</button></div>
+  <div class="stat" id="stat"></div>
+  <div class="stat">Scroll = zoom · Drag = pan · Click = recenter</div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W,H,img;
+let view={cx:-0.5,cy:0,scale:3.2};
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;img=ctx.createImageData(W,H);render();}
+window.addEventListener('resize',resize);
+const palettes={
+  Cosmic:t=>[9+t*120%255,t*255%200,80+t*175%175],
+  Fire:t=>[Math.min(255,t*900),Math.min(255,Math.max(0,t*600-200)),Math.max(0,t*400-300)],
+  Ocean:t=>[20+t*60,80+t*150%175,120+t*135%135],
+  Grayscale:t=>{const v=t*255;return[v,v,v];},
+  Psychedelic:t=>[128+127*Math.sin(t*20),128+127*Math.sin(t*20+2),128+127*Math.sin(t*20+4)]
+};
+function P(id){return +document.getElementById(id).value;}
+function render(){
+  const maxIter=P('iter');document.getElementById('itv').textContent=maxIter;
+  const type=document.getElementById('fractal').value;
+  const pal=palettes[document.getElementById('palette').value];
+  const cRe=P('cre'),cIm=P('cim');
+  const aspect=H/W;
+  const data=img.data;
+  for(let py=0;py<H;py++){
+    const y0=view.cy+(py/H-0.5)*view.scale*aspect;
+    for(let px=0;px<W;px++){
+      const x0=view.cx+(px/W-0.5)*view.scale;
+      let zx,zy,cx,cy;
+      if(type==='mandel'){zx=0;zy=0;cx=x0;cy=y0;}else{zx=x0;zy=y0;cx=cRe;cy=cIm;}
+      let i=0,zx2=zx*zx,zy2=zy*zy;
+      while(zx2+zy2<=4&&i<maxIter){zy=2*zx*zy+cy;zx=zx2-zy2+cx;zx2=zx*zx;zy2=zy*zy;i++;}
+      const idx=(py*W+px)*4;
+      if(i>=maxIter){data[idx]=data[idx+1]=data[idx+2]=8;}
+      else{
+        // smooth coloring
+        const log_zn=Math.log(zx2+zy2)/2;const nu=Math.log(log_zn/Math.log(2))/Math.log(2);
+        const t=(i+1-nu)/maxIter;
+        const c=pal(t);
+        data[idx]=c[0]&255;data[idx+1]=c[1]&255;data[idx+2]=c[2]&255;
+      }
+      data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  document.getElementById('stat').textContent=`center: ${view.cx.toFixed(6)}, ${view.cy.toFixed(6)}\nspan: ${view.scale.toExponential(3)}\nzoom: ${(3.2/view.scale).toExponential(2)}×`;
+}
+// interaction
+cv.addEventListener('wheel',e=>{e.preventDefault();const f=e.deltaY<0?0.8:1.25;const mx=view.cx+(e.clientX/W-0.5)*view.scale;const my=view.cy+(e.clientY/H-0.5)*view.scale*(H/W);view.scale*=f;view.cx=mx-(e.clientX/W-0.5)*view.scale;view.cy=my-(e.clientY/H-0.5)*view.scale*(H/W);render();},{passive:false});
+let drag=null;
+cv.addEventListener('mousedown',e=>drag={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy,moved:false});
+cv.addEventListener('mousemove',e=>{if(!drag)return;drag.moved=true;view.cx=drag.cx-(e.clientX-drag.x)/W*view.scale;view.cy=drag.cy-(e.clientY-drag.y)/H*view.scale*(H/W);render();});
+window.addEventListener('mouseup',e=>{if(drag&&!drag.moved){view.cx+=(e.clientX/W-0.5)*view.scale;view.cy+=(e.clientY/H-0.5)*view.scale*(H/W);render();}drag=null;});
+document.getElementById('fractal').onchange=e=>{document.getElementById('juliaCtl').style.display=e.target.value==='julia'?'block':'none';if(e.target.value==='julia'){view={cx:0,cy:0,scale:3.2};}else{view={cx:-0.5,cy:0,scale:3.2};}render();};
+['iter','palette','cre','cim'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById('crv').textContent=P('cre').toFixed(2);document.getElementById('civ').textContent=P('cim').toFixed(2);render();});
+document.getElementById('zoomIn').onclick=()=>{view.scale*=0.6;render();};
+document.getElementById('zoomOut').onclick=()=>{view.scale*=1.6;render();};
+document.getElementById('reset').onclick=()=>{const t=document.getElementById('fractal').value;view=t==='julia'?{cx:0,cy:0,scale:3.2}:{cx:-0.5,cy:0,scale:3.2};render();};
+document.getElementById('save').onclick=()=>{const a=document.createElement('a');a.download='fractal.png';a.href=cv.toDataURL();a.click();};
+resize();
+</script>
+</body>
+</html>

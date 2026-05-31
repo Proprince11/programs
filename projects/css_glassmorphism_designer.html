@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSS Glassmorphism Designer</title>
+<style>
+  :root{--panel:rgba(20,24,38,0.7);--txt:#eef1f8;--muted:#aab1c6;--line:rgba(255,255,255,0.12)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;color:var(--txt);font-family:system-ui,sans-serif;padding:18px;
+    background:linear-gradient(120deg,#7b2ff7,#f107a3 45%,#21d4fd);background-size:300% 300%;animation:bg 18s ease infinite;overflow-x:hidden}
+  @keyframes bg{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
+  h1{font-size:19px;margin-bottom:12px;text-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:18px}
+  .controls,.codebox{background:rgba(12,14,24,0.55);border:1px solid var(--line);border-radius:14px;padding:16px;backdrop-filter:blur(6px)}
+  label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:12px 0 4px}
+  input[type=range]{width:100%}
+  input[type=color]{width:50px;height:30px;border:none;background:none}
+  .preview{display:flex;align-items:center;justify-content:center;min-height:380px;border-radius:14px;position:relative;overflow:hidden}
+  .preview .deco{position:absolute;border-radius:50%;filter:blur(2px);opacity:.85}
+  #card{padding:32px;width:280px;text-align:center}
+  #card h2{font-size:22px;margin-bottom:8px}
+  #card p{font-size:13px;opacity:.85}
+  pre{background:#0a0c14;color:#9ae6b4;padding:14px;border-radius:10px;font-size:12px;overflow:auto;white-space:pre-wrap}
+  button{background:rgba(255,255,255,0.15);border:1px solid var(--line);color:#fff;padding:8px 14px;border-radius:8px;cursor:pointer;margin-top:10px}
+  .bgs{display:flex;gap:6px;margin-top:6px}
+  .bgs div{width:30px;height:30px;border-radius:6px;cursor:pointer;border:2px solid transparent}
+  .bgs div.sel{border-color:#fff}
+</style>
+</head>
+<body>
+<h1>🧊 CSS Glassmorphism Designer</h1>
+<div class="layout">
+  <div class="controls">
+    <label>Blur <span id="blurv">12</span>px</label><input type="range" id="blur" min="0" max="40" value="12">
+    <label>Transparency <span id="alphav">0.18</span></label><input type="range" id="alpha" min="0" max="1" step="0.01" value="0.18">
+    <label>Saturation <span id="satv">180</span>%</label><input type="range" id="sat" min="100" max="300" value="180">
+    <label>Border radius <span id="radv">18</span>px</label><input type="range" id="rad" min="0" max="50" value="18">
+    <label>Border alpha <span id="bav">0.30</span></label><input type="range" id="ba" min="0" max="1" step="0.01" value="0.3">
+    <label>Shadow depth <span id="shv">28</span>px</label><input type="range" id="sh" min="0" max="80" value="28">
+    <label>Tint color</label><input type="color" id="tint" value="#ffffff">
+    <label>Outline glow</label><input type="color" id="glow" value="#ffffff">
+    <label>Background</label>
+    <div class="bgs" id="bgs"></div>
+    <button id="copy">📋 Copy CSS</button>
+  </div>
+  <div>
+    <div class="preview" id="preview">
+      <div class="deco" style="width:120px;height:120px;background:#ffd166;top:30px;left:40px"></div>
+      <div class="deco" style="width:160px;height:160px;background:#06d6a0;bottom:20px;right:60px"></div>
+      <div class="deco" style="width:90px;height:90px;background:#ef476f;bottom:60px;left:80px"></div>
+      <div id="card"><h2>Glass Card</h2><p>Live backdrop-filter preview. Adjust the controls to sculpt the frosted-glass surface, then export production-ready CSS.</p></div>
+    </div>
+    <div class="codebox" style="margin-top:16px">
+      <pre id="code"></pre>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+const BGS=['linear-gradient(120deg,#7b2ff7,#f107a3,#21d4fd)','linear-gradient(120deg,#0f2027,#203a43,#2c5364)','linear-gradient(120deg,#ee9ca7,#ffdde1)','radial-gradient(circle at 30% 30%,#ff6a00,#ee0979)','linear-gradient(120deg,#11998e,#38ef7d)','url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="%23222"/><circle cx="20" cy="20" r="8" fill="%23555"/></svg>\')'];
+function hexToRgb(h){h=h.replace('#','');return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function V(id){return document.getElementById(id).value;}
+function update(){
+  const blur=V('blur'),alpha=V('alpha'),sat=V('sat'),rad=V('rad'),ba=V('ba'),sh=V('sh');
+  ['blur','alpha','sat','rad','ba','sh'].forEach(id=>document.getElementById(id+'v').textContent=V(id));
+  const tint=hexToRgb(V('tint')),glow=hexToRgb(V('glow'));
+  const card=document.getElementById('card');
+  const bg=`rgba(${tint[0]},${tint[1]},${tint[2]},${alpha})`;
+  const filt=`blur(${blur}px) saturate(${sat}%)`;
+  const border=`1px solid rgba(255,255,255,${ba})`;
+  const shadow=`0 ${sh/2}px ${sh}px rgba(0,0,0,0.35), 0 0 ${sh/2}px rgba(${glow[0]},${glow[1]},${glow[2]},0.25)`;
+  Object.assign(card.style,{background:bg,backdropFilter:filt,webkitBackdropFilter:filt,border,borderRadius:rad+'px',boxShadow:shadow});
+  document.getElementById('code').textContent=
+`.glass-card {
+  background: ${bg};
+  -webkit-backdrop-filter: ${filt};
+  backdrop-filter: ${filt};
+  border: ${border};
+  border-radius: ${rad}px;
+  box-shadow: ${shadow};
+}`;
+}
+['blur','alpha','sat','rad','ba','sh','tint','glow'].forEach(id=>document.getElementById(id).oninput=update);
+const bgsEl=document.getElementById('bgs');
+BGS.forEach((b,i)=>{const d=document.createElement('div');d.style.background=b;if(i===0)d.classList.add('sel');d.onclick=()=>{document.getElementById('preview').style.background=b;[...bgsEl.children].forEach(x=>x.classList.remove('sel'));d.classList.add('sel');};bgsEl.appendChild(d);});
+document.getElementById('preview').style.background=BGS[0];
+document.getElementById('copy').onclick=function(){navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('code').textContent);this.textContent='✓ Copied!';setTimeout(()=>this.textContent='📋 Copy CSS',1200);};
+update();
+</script>
+</body>
+</html>

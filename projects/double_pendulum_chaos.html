@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Double Pendulum Chaos</title>
+<style>
+  :root{--panel:#11151f;--accent:#f472b6;--txt:#e6edf3;--muted:#8b94a3;--line:#262d3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070d;color:var(--txt);font-family:system-ui,sans-serif;overflow:hidden}
+  #ui{position:fixed;top:12px;right:12px;background:rgba(17,21,31,0.92);border:1px solid var(--line);border-radius:12px;padding:14px;width:240px;z-index:10;backdrop-filter:blur(6px)}
+  h1{font-size:14px;margin-bottom:10px}
+  label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin:8px 0 3px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:#1a1f2b;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:7px;font-size:12px;cursor:pointer;margin-top:6px;width:100%}
+  button:hover{border-color:var(--accent)}
+  .stat{font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px;line-height:1.5}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>🔗 Double Pendulum — RK4 integrator</h1>
+  <label>Mass 1 <span id="m1v">10</span></label><input type="range" id="m1" min="1" max="40" value="10">
+  <label>Mass 2 <span id="m2v">10</span></label><input type="range" id="m2" min="1" max="40" value="10">
+  <label>Length 1 <span id="l1v">140</span></label><input type="range" id="l1" min="60" max="220" value="140">
+  <label>Length 2 <span id="l2v">140</span></label><input type="range" id="l2" min="60" max="220" value="140">
+  <label>Gravity <span id="gv">1.0</span></label><input type="range" id="g" min="0.2" max="3" step="0.1" value="1">
+  <label>Damping <span id="dv">0.000</span></label><input type="range" id="damp" min="0" max="0.01" step="0.0005" value="0">
+  <button id="reset">⟲ Reset to drag pose</button>
+  <button id="multi">+ Add 20 ghosts (chaos fan)</button>
+  <button id="clearTrail">Clear trail</button>
+  <div class="stat" id="stat"></div>
+  <div class="stat">Drag the bobs to set initial angles. Ghosts start with a 0.001 rad perturbation to reveal sensitive dependence.</div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W,H,ox,oy;function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;ox=W/2;oy=H/2.6;}
+window.addEventListener('resize',resize);resize();
+function P(id){return +document.getElementById(id).value;}
+// state: [t1, w1, t2, w2]
+function makeState(t1,t2){return[t1,0,t2,0];}
+let main={s:makeState(Math.PI/2,Math.PI/2),trail:[],color:'#f472b6'};
+let ghosts=[];
+// equations of motion -> derivatives
+function deriv(s){
+  const m1=P('m1'),m2=P('m2'),l1=P('l1'),l2=P('l2'),g=P('g')*0.5;
+  const[t1,w1,t2,w2]=s;
+  const dt=t1-t2,sn=Math.sin(dt),cs=Math.cos(dt);
+  const den=2*m1+m2-m2*Math.cos(2*t1-2*t2);
+  const a1=(-g*(2*m1+m2)*Math.sin(t1)-m2*g*Math.sin(t1-2*t2)-2*sn*m2*(w2*w2*l2+w1*w1*l1*cs))/(l1*den);
+  const a2=(2*sn*(w1*w1*l1*(m1+m2)+g*(m1+m2)*Math.cos(t1)+w2*w2*l2*m2*cs))/(l2*den);
+  return[w1,a1,w2,a2];
+}
+function rk4(s,h){
+  const k1=deriv(s);
+  const s2=s.map((v,i)=>v+k1[i]*h/2),k2=deriv(s2);
+  const s3=s.map((v,i)=>v+k2[i]*h/2),k3=deriv(s3);
+  const s4=s.map((v,i)=>v+k3[i]*h),k4=deriv(s4);
+  const out=s.map((v,i)=>v+h/6*(k1[i]+2*k2[i]+2*k3[i]+k4[i]));
+  const damp=P('damp');out[1]*=(1-damp);out[3]*=(1-damp);
+  return out;
+}
+function positions(s){
+  const l1=P('l1'),l2=P('l2');
+  const x1=ox+l1*Math.sin(s[0]),y1=oy+l1*Math.cos(s[0]);
+  const x2=x1+l2*Math.sin(s[2]),y2=y1+l2*Math.cos(s[2]);
+  return{x1,y1,x2,y2};
+}
+function physicsStep(){const h=0.18;for(const o of[main,...ghosts]){for(let k=0;k<4;k++)o.s=rk4(o.s,h);}}
+function draw(){
+  ctx.fillStyle='rgba(5,7,13,0.25)';ctx.fillRect(0,0,W,H);
+  for(const o of ghosts){const p=positions(o.s);ctx.strokeStyle='rgba(96,165,250,0.25)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(p.x1,p.y1);ctx.lineTo(p.x2,p.y2);ctx.stroke();ctx.fillStyle='rgba(96,165,250,0.6)';ctx.beginPath();ctx.arc(p.x2,p.y2,3,0,7);ctx.fill();}
+  const p=positions(main.s);
+  main.trail.push({x:p.x2,y:p.y2});if(main.trail.length>1400)main.trail.shift();
+  ctx.lineWidth=2;ctx.beginPath();main.trail.forEach((q,i)=>{if(i===0){ctx.moveTo(q.x,q.y);}else{ctx.strokeStyle=`hsl(${320+i/8%60} 80% 60% / ${i/main.trail.length})`;ctx.lineTo(q.x,q.y);ctx.stroke();ctx.beginPath();ctx.moveTo(q.x,q.y);}});
+  ctx.strokeStyle='#cbd5e1';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(p.x1,p.y1);ctx.lineTo(p.x2,p.y2);ctx.stroke();
+  ctx.fillStyle='#94a3b8';ctx.beginPath();ctx.arc(ox,oy,4,0,7);ctx.fill();
+  ctx.fillStyle='#60a5fa';ctx.beginPath();ctx.arc(p.x1,p.y1,Math.cbrt(P('m1'))*3,0,7);ctx.fill();
+  ctx.fillStyle='#f472b6';ctx.beginPath();ctx.arc(p.x2,p.y2,Math.cbrt(P('m2'))*3,0,7);ctx.fill();
+  document.getElementById('stat').textContent=`θ₁ ${main.s[0].toFixed(3)}  ω₁ ${main.s[1].toFixed(3)}\nθ₂ ${main.s[2].toFixed(3)}  ω₂ ${main.s[3].toFixed(3)}\nghosts: ${ghosts.length}`;
+}
+let dragTarget=null;
+cv.addEventListener('mousedown',e=>{const p=positions(main.s);if(Math.hypot(e.clientX-p.x1,e.clientY-p.y1)<24)dragTarget=1;else if(Math.hypot(e.clientX-p.x2,e.clientY-p.y2)<24)dragTarget=2;});
+cv.addEventListener('mousemove',e=>{if(!dragTarget)return;if(dragTarget===1){main.s[0]=Math.atan2(e.clientX-ox,e.clientY-oy);main.s[1]=0;}else{const p=positions(main.s);main.s[2]=Math.atan2(e.clientX-p.x1,e.clientY-p.y1);main.s[3]=0;}ghosts=[];main.trail=[];});
+window.addEventListener('mouseup',()=>dragTarget=null);
+['m1','m2','l1','l2','g','damp'].forEach(id=>document.getElementById(id).oninput=()=>{document.getElementById(id+'v').textContent=id==='g'?P('g').toFixed(1):id==='damp'?P('damp').toFixed(3):P(id);});
+document.getElementById('reset').onclick=()=>{main={s:makeState(Math.PI/2,Math.PI/2),trail:[],color:'#f472b6'};ghosts=[];};
+document.getElementById('multi').onclick=()=>{ghosts=[];for(let i=0;i<20;i++){ghosts.push({s:[main.s[0]+ (i+1)*0.001, main.s[1],main.s[2],main.s[3]]});}};
+document.getElementById('clearTrail').onclick=()=>main.trail=[];
+function loop(){requestAnimationFrame(loop);if(!dragTarget)physicsStep();draw();}
+loop();
+</script>
+</body>
+</html>

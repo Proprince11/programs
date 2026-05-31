@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Art Studio</title>
+<style>
+  :root{--bg:#0e1015;--panel:#191c24;--accent:#fbbf24;--txt:#e6edf3;--muted:#8b94a3;--line:#2a2e3a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:system-ui,sans-serif;padding:14px}
+  h1{font-size:18px;margin-bottom:10px}
+  .layout{display:grid;grid-template-columns:230px 1fr 200px;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  button{background:#21252f;border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12px;margin:3px}
+  button:hover{border-color:var(--accent)}
+  button.active{background:var(--accent);color:#231a02}
+  label{font-size:12px;color:var(--muted);display:block;margin:10px 0 4px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .palette{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:8px}
+  .sw{aspect-ratio:1;border-radius:5px;cursor:pointer;border:2px solid transparent}
+  .sw.sel{border-color:#fff;box-shadow:0 0 6px var(--accent)}
+  #stageWrap{display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#1b1e26 0% 25%,#222631 0% 50%) 50%/24px 24px;border-radius:10px;overflow:auto}
+  canvas{image-rendering:pixelated;cursor:crosshair;background:transparent}
+  .row{display:flex;flex-wrap:wrap}
+  .frames{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .frame{width:48px;height:48px;border:2px solid var(--line);border-radius:6px;image-rendering:pixelated;cursor:pointer}
+  .frame.sel{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>🖼️ Pixel Art Studio</h1>
+<div class="layout">
+  <div class="panel">
+    <div class="row">
+      <button id="pen" class="active">✏️ Pen</button>
+      <button id="erase">🧽 Erase</button>
+      <button id="fill">🪣 Fill</button>
+      <button id="pick">💉 Pick</button>
+      <button id="line">📏 Line</button>
+    </div>
+    <label>Custom color</label>
+    <input type="color" id="color" value="#fbbf24" style="width:100%;height:36px;border:none;background:none">
+    <label>Palette</label>
+    <div class="palette" id="palette"></div>
+    <label>Grid size <span id="gsv">16</span>×<span id="gsv2">16</span></label>
+    <input type="range" id="gridsize" min="8" max="64" step="8" value="16">
+    <button id="toggleGrid" class="active">Show grid</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div class="panel">
+    <div id="stageWrap"><canvas id="cv"></canvas></div>
+    <div class="row" style="margin-top:10px">
+      <button id="undo">↶ Undo</button><button id="redo">↷ Redo</button>
+      <button id="exportPng">⬇ PNG</button><button id="exportJson">⬇ JSON</button>
+      <button id="importJson">⬆ JSON</button>
+      <input type="file" id="file" accept="application/json" style="display:none">
+    </div>
+  </div>
+  <div class="panel">
+    <label>Animation frames</label>
+    <button id="addFrame">+ Add frame</button>
+    <button id="dupFrame">⧉ Duplicate</button>
+    <button id="playAnim">▶ Play</button>
+    <div class="frames" id="frames"></div>
+    <label>FPS <span id="fpsv">6</span></label>
+    <input type="range" id="fps" min="1" max="24" value="6">
+  </div>
+</div>
+<script>
+"use strict";
+const PAL=['#000000','#ffffff','#ff4d4d','#fbbf24','#4ade80','#38bdf8','#a78bfa','#f472b6','#7f1d1d','#92400e','#166534','#155e75','#4c1d95','#831843','#1f2937','#9ca3af'];
+let GRID=16, tool='pen', curColor='#fbbf24', showGrid=true, drawing=false;
+let frames=[makeGrid()], curFrame=0;
+let undoStack=[],redoStack=[];
+function makeGrid(){return Array.from({length:GRID},()=>new Array(GRID).fill(null));}
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let DISP=512,CELL;
+function resize(){CELL=Math.floor(DISP/GRID);cv.width=cv.height=CELL*GRID;render();}
+function render(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const g=frames[curFrame];
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(g[y][x]){ctx.fillStyle=g[y][x];ctx.fillRect(x*CELL,y*CELL,CELL,CELL);}}
+  if(showGrid){ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=1;for(let i=0;i<=GRID;i++){ctx.beginPath();ctx.moveTo(i*CELL,0);ctx.lineTo(i*CELL,cv.height);ctx.stroke();ctx.beginPath();ctx.moveTo(0,i*CELL);ctx.lineTo(cv.width,i*CELL);ctx.stroke();}}
+  renderFrames();
+}
+function pushUndo(){undoStack.push(JSON.stringify(frames[curFrame]));if(undoStack.length>60)undoStack.shift();redoStack=[];}
+function cellAt(e){const r=cv.getBoundingClientRect();const x=Math.floor((e.clientX-r.left)/CELL),y=Math.floor((e.clientY-r.top)/CELL);return[x,y];}
+function paint(x,y){if(x<0||y<0||x>=GRID||y>=GRID)return;const g=frames[curFrame];
+  if(tool==='pen'||tool==='line')g[y][x]=curColor;
+  else if(tool==='erase')g[y][x]=null;
+  else if(tool==='pick'){if(g[y][x]){curColor=g[y][x];document.getElementById('color').value=g[y][x];selPalette();}}
+  else if(tool==='fill')floodFill(x,y,g[y][x]);
+}
+function floodFill(x,y,target){const g=frames[curFrame];if(target===curColor)return;const st=[[x,y]];while(st.length){const[cx,cy]=st.pop();if(cx<0||cy<0||cx>=GRID||cy>=GRID)continue;if(g[cy][cx]!==target)continue;g[cy][cx]=curColor;st.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]);}}
+let lineStart=null;
+cv.addEventListener('mousedown',e=>{pushUndo();drawing=true;const[x,y]=cellAt(e);if(tool==='line'){lineStart=[x,y];}else{paint(x,y);render();}});
+cv.addEventListener('mousemove',e=>{if(!drawing)return;const[x,y]=cellAt(e);if(tool==='line'){render();drawLinePreview(lineStart,[x,y]);}else if(tool==='pen'||tool==='erase'){paint(x,y);render();}});
+window.addEventListener('mouseup',e=>{if(drawing&&tool==='line'&&lineStart){const[x,y]=cellAt(e);bresenham(lineStart,[x,y]);render();}drawing=false;lineStart=null;});
+function bresenham(a,b){let[x0,y0]=a,[x1,y1]=b;const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;let err=dx-dy;while(true){frames[curFrame][y0]&&(frames[curFrame][y0][x0]=curColor);if(x0===x1&&y0===y1)break;const e2=2*err;if(e2>-dy){err-=dy;x0+=sx;}if(e2<dx){err+=dx;y0+=sy;}}}
+function drawLinePreview(a,b){ctx.fillStyle=curColor;let[x0,y0]=a,[x1,y1]=b;const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;let err=dx-dy;while(true){ctx.fillRect(x0*CELL,y0*CELL,CELL,CELL);if(x0===x1&&y0===y1)break;const e2=2*err;if(e2>-dy){err-=dy;x0+=sx;}if(e2<dx){err+=dx;y0+=sy;}}}
+// palette
+const palEl=document.getElementById('palette');
+function buildPalette(){palEl.innerHTML='';PAL.forEach(c=>{const d=document.createElement('div');d.className='sw'+(c===curColor?' sel':'');d.style.background=c;d.onclick=()=>{curColor=c;document.getElementById('color').value=c;selPalette();};palEl.appendChild(d);});}
+function selPalette(){[...palEl.children].forEach((d,i)=>d.classList.toggle('sel',PAL[i]===curColor));}
+buildPalette();
+document.getElementById('color').oninput=e=>{curColor=e.target.value;selPalette();};
+// tools
+['pen','erase','fill','pick','line'].forEach(t=>document.getElementById(t).onclick=function(){tool=t;document.querySelectorAll('.layout>.panel:first-child .row button').forEach(b=>b.classList.remove('active'));this.classList.add('active');});
+document.getElementById('toggleGrid').onclick=function(){showGrid=!showGrid;this.classList.toggle('active',showGrid);render();};
+document.getElementById('clear').onclick=()=>{pushUndo();frames[curFrame]=makeGrid();render();};
+document.getElementById('gridsize').oninput=function(){GRID=+this.value;document.getElementById('gsv').textContent=GRID;document.getElementById('gsv2').textContent=GRID;frames=frames.map(()=>makeGrid());resize();};
+document.getElementById('undo').onclick=()=>{if(undoStack.length){redoStack.push(JSON.stringify(frames[curFrame]));frames[curFrame]=JSON.parse(undoStack.pop());render();}};
+document.getElementById('redo').onclick=()=>{if(redoStack.length){undoStack.push(JSON.stringify(frames[curFrame]));frames[curFrame]=JSON.parse(redoStack.pop());render();}};
+// export
+document.getElementById('exportPng').onclick=()=>{const s=16;const out=document.createElement('canvas');out.width=out.height=GRID*s;const o=out.getContext('2d');const g=frames[curFrame];for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(g[y][x]){o.fillStyle=g[y][x];o.fillRect(x*s,y*s,s,s);}}const a=document.createElement('a');a.download='pixelart.png';a.href=out.toDataURL();a.click();};
+document.getElementById('exportJson').onclick=()=>{const blob=new Blob([JSON.stringify({grid:GRID,frames})],{type:'application/json'});const a=document.createElement('a');a.download='pixelart.json';a.href=URL.createObjectURL(blob);a.click();};
+document.getElementById('importJson').onclick=()=>document.getElementById('file').click();
+document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const d=JSON.parse(r.result);GRID=d.grid;frames=d.frames;curFrame=0;document.getElementById('gridsize').value=GRID;document.getElementById('gsv').textContent=GRID;document.getElementById('gsv2').textContent=GRID;resize();};r.readAsText(f);};
+// frames
+function renderFrames(){const fc=document.getElementById('frames');fc.innerHTML='';frames.forEach((fr,i)=>{const c=document.createElement('canvas');c.className='frame'+(i===curFrame?' sel':'');c.width=c.height=GRID;const fx=c.getContext('2d');for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(fr[y][x]){fx.fillStyle=fr[y][x];fx.fillRect(x,y,1,1);}}c.onclick=()=>{curFrame=i;render();};fc.appendChild(c);});}
+document.getElementById('addFrame').onclick=()=>{frames.push(makeGrid());curFrame=frames.length-1;render();};
+document.getElementById('dupFrame').onclick=()=>{frames.splice(curFrame+1,0,JSON.parse(JSON.stringify(frames[curFrame])));curFrame++;render();};
+let anim=null;
+document.getElementById('playAnim').onclick=function(){if(anim){clearInterval(anim);anim=null;this.textContent='▶ Play';return;}this.textContent='⏸ Stop';let i=0;anim=setInterval(()=>{curFrame=i%frames.length;render();i++;},1000/+document.getElementById('fps').value);};
+document.getElementById('fps').oninput=function(){document.getElementById('fpsv').textContent=this.value;};
+resize();
+</script>
+</body>
+</html>
